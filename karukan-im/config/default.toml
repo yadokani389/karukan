@@ -4,6 +4,8 @@
 [conversion]
 # 変換ストラテジー: adaptive（動的切替）, light（軽量モデルのみ）, main（メインモデルのみ）
 strategy = "adaptive"
+# 起動時からライブ変換を有効にする
+live_conversion = false
 # 変換候補数（Space押下時）
 num_candidates = 9
 # 周辺テキスト（カーソル左側の確定済みテキスト）を変換時のコンテキストとして使用する

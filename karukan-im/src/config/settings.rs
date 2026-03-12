@@ -42,6 +42,8 @@ pub struct ConversionSettings {
     /// Conversion strategy mode (adaptive, light, main)
     #[serde(default)]
     pub strategy: StrategyMode,
+    /// Whether live conversion starts enabled
+    pub live_conversion: bool,
     /// Number of candidates to show on Space conversion
     pub num_candidates: usize,
     /// Use surrounding text (text left of cursor) as context for conversion
@@ -207,6 +209,7 @@ mod tests {
     #[test]
     fn test_default_settings() {
         let settings = Settings::default();
+        assert!(!settings.conversion.live_conversion);
         assert_eq!(settings.conversion.num_candidates, 9);
         assert!(settings.conversion.use_context);
         assert_eq!(settings.conversion.max_context_length, 20);
@@ -230,6 +233,7 @@ mod tests {
             file,
             r#"
 [conversion]
+live_conversion = true
 num_candidates = 5
 use_context = false
 "#
@@ -238,6 +242,7 @@ use_context = false
 
         let path = file.path().to_path_buf();
         let settings = Settings::load_from(&path).unwrap();
+        assert!(settings.conversion.live_conversion);
         assert_eq!(settings.conversion.num_candidates, 5);
         assert!(!settings.conversion.use_context);
     }

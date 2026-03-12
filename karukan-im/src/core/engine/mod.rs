@@ -115,6 +115,7 @@ pub struct InputMethodEngine {
 impl InputMethodEngine {
     /// Create a new IME engine
     pub fn new() -> Self {
+        let config = EngineConfig::default();
         Self {
             state: InputState::Empty,
             converters: Converters {
@@ -123,13 +124,16 @@ impl InputMethodEngine {
                 light_kanji: None,
             },
             surrounding_context: None,
-            config: EngineConfig::default(),
+            live: LiveConversion {
+                enabled: config.live_conversion,
+                text: String::new(),
+            },
+            config,
             metrics: ConversionMetrics::default(),
             input_mode: InputMode::Hiragana,
             direct_mode: None,
             input_buf: InputBuffer::new(),
             raw_units: Vec::new(),
-            live: LiveConversion::default(),
             dicts: Dictionaries::default(),
             learning: None,
         }
@@ -137,10 +141,10 @@ impl InputMethodEngine {
 
     /// Create with configuration
     pub fn with_config(config: EngineConfig) -> Self {
-        Self {
-            config,
-            ..Self::new()
-        }
+        let mut engine = Self::new();
+        engine.live.enabled = config.live_conversion;
+        engine.config = config;
+        engine
     }
 
     /// Get last conversion time in milliseconds (inference only)

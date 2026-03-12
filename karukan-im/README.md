@@ -158,6 +158,7 @@ I2026-02-24 22:57:54.252982 addonmanager.cpp:195] Loaded addon karukan
 ```toml
 [conversion]
 strategy = "adaptive"           # 変換ストラテジー（adaptive / light / main）
+live_conversion = false         # 起動時からライブ変換を有効にする
 num_candidates = 9              # 変換候補数（Space押下時）
 n_threads = 4                   # 推論スレッド数（0 = 全コア使用）
 model = "jinen-v1-small-q5"     # メインモデル（モデルID or GGUFパス）

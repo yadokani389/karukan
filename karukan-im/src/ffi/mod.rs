@@ -114,6 +114,7 @@ impl KarukanEngine {
         let settings = Settings::load().unwrap_or_default();
 
         let config = EngineConfig {
+            live_conversion: settings.conversion.live_conversion,
             num_candidates: settings.conversion.num_candidates,
             display_context_len: 10,
             max_api_context_len: if settings.conversion.use_context {

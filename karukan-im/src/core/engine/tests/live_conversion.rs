@@ -9,6 +9,15 @@ fn test_live_conversion_disabled_by_default() {
 }
 
 #[test]
+fn test_live_conversion_respects_config_default() {
+    let engine = InputMethodEngine::with_config(EngineConfig {
+        live_conversion: true,
+        ..EngineConfig::default()
+    });
+    assert!(engine.live.enabled);
+}
+
+#[test]
 fn test_live_conversion_enabled() {
     let engine = make_live_conversion_engine();
     assert!(engine.live.enabled);

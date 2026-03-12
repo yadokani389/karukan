@@ -66,6 +66,8 @@ pub(in crate::core) struct SurroundingContext {
 /// Configuration for the IME engine
 #[derive(Debug, Clone)]
 pub struct EngineConfig {
+    /// Whether live conversion starts enabled
+    pub live_conversion: bool,
     /// Number of conversion candidates for explicit conversion (Space key)
     pub num_candidates: usize,
     /// Maximum context length to display
@@ -86,6 +88,7 @@ pub struct EngineConfig {
 impl Default for EngineConfig {
     fn default() -> Self {
         Self {
+            live_conversion: false,
             num_candidates: 3, // Space conversion: beam search with 3 candidates
             display_context_len: 10,
             max_api_context_len: 10,
