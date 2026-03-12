@@ -25,6 +25,17 @@ fn threads_label(n_threads: u32) -> String {
 }
 
 impl InputMethodEngine {
+    /// Initialize the input table from a TSV file.
+    pub fn init_input_table(&mut self, input_table_path: Option<&str>) -> Result<()> {
+        let Some(path) = input_table_path.filter(|path| !path.trim().is_empty()) else {
+            return Ok(());
+        };
+
+        debug!("Initializing input table from {}", path);
+        self.converters.romaji = RomajiConverter::from_tsv_path(path)?;
+        Ok(())
+    }
+
     /// Initialize the kanji converter (call this early to avoid latency)
     /// Uses the default model from the registry.
     pub fn init_kanji_converter(&mut self) -> Result<()> {

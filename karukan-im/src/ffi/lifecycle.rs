@@ -25,11 +25,20 @@ pub extern "C" fn karukan_engine_init(engine: *mut KarukanEngine) -> c_int {
 
     let strategy = settings.conversion.strategy;
     tracing::info!(
-        "Karukan init: model={:?}, light_model={:?}, strategy={:?}",
+        "Karukan init: model={:?}, light_model={:?}, input_table_path={:?}, strategy={:?}",
         settings.conversion.model,
         settings.conversion.light_model,
+        settings.conversion.input_table_path,
         strategy,
     );
+
+    if let Err(e) = engine
+        .engine
+        .init_input_table(settings.conversion.input_table_path.as_deref())
+    {
+        tracing::error!("Failed to initialize input table: {}", e);
+        return -1;
+    }
 
     engine
         .engine

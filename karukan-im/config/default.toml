@@ -20,6 +20,8 @@ max_latency_ms = 80
 model = "jinen-v1-small-q5"
 # Beam search model for Space conversion (uses default model only if unset)
 light_model = "jinen-v1-xsmall-q5"
+# Input table TSV path
+input_table_path = ""
 # 推論スレッド数（0 = 全コア使用）
 n_threads = 4
 # ユーザー辞書: ~/.local/share/karukan-im/user_dicts/ に辞書ファイルを配置（Mozc TSV or KRKN binary）

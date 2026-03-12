@@ -54,6 +54,8 @@ pub struct ConversionSettings {
     pub model: Option<String>,
     /// Beam search model variant id (used on Space conversion, default model if unset)
     pub light_model: Option<String>,
+    /// Input table TSV path (optional, uses built-in romaji rules if unset or empty)
+    pub input_table_path: Option<String>,
     /// Token count threshold for beam search (at or below → beam, above → greedy)
     pub short_input_threshold: usize,
     /// Beam width for short input
@@ -238,6 +240,26 @@ use_context = false
         let settings = Settings::load_from(&path).unwrap();
         assert_eq!(settings.conversion.num_candidates, 5);
         assert!(!settings.conversion.use_context);
+    }
+
+    #[test]
+    fn test_input_table_path_loads() {
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            r#"
+[conversion]
+input_table_path = "/tmp/AZIK.tsv"
+"#
+        )
+        .unwrap();
+
+        let path = file.path().to_path_buf();
+        let settings = Settings::load_from(&path).unwrap();
+        assert_eq!(
+            settings.conversion.input_table_path.as_deref(),
+            Some("/tmp/AZIK.tsv")
+        );
     }
 
     #[test]

@@ -1,6 +1,18 @@
+use std::fs;
+use std::path::Path;
+
+use anyhow::{Context, Result};
+
+use crate::kana::hiragana_to_katakana;
+
 use super::rules::build_rules;
 use super::trie::TrieNode;
-use crate::kana::hiragana_to_katakana;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RuleSetKind {
+    Legacy,
+    Table,
+}
 
 /// Events that can occur during conversion
 #[derive(Debug, Clone, PartialEq)]
@@ -30,15 +42,57 @@ pub struct RomajiConverter {
     trie: TrieNode,
     buffer: String,
     output: String,
+    rule_set: RuleSetKind,
 }
 
 impl RomajiConverter {
     /// Create a new converter with default rules
     pub fn new() -> Self {
+        Self::from_trie(build_rules(), RuleSetKind::Legacy)
+    }
+
+    /// Create a converter from a TSV string.
+    pub fn from_tsv_str(tsv: &str) -> Result<Self> {
+        let mut trie = TrieNode::new();
+
+        for (index, raw_line) in tsv.lines().enumerate() {
+            let line = raw_line.trim_end_matches('\r');
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+
+            let (key, value) = line
+                .split_once('\t')
+                .with_context(|| format!("invalid TSV format at line {}", index + 1))?;
+
+            if key.is_empty() {
+                anyhow::bail!("empty key at line {}", index + 1);
+            }
+            if value.is_empty() {
+                anyhow::bail!("empty value at line {}", index + 1);
+            }
+
+            trie.insert(key, value);
+        }
+
+        Ok(Self::from_trie(trie, RuleSetKind::Table))
+    }
+
+    /// Create a converter from a TSV file.
+    pub fn from_tsv_path(path: impl AsRef<Path>) -> Result<Self> {
+        let path = path.as_ref();
+        let tsv = fs::read_to_string(path)
+            .with_context(|| format!("failed to read input table {}", path.display()))?;
+        Self::from_tsv_str(&tsv)
+            .with_context(|| format!("failed to parse input table {}", path.display()))
+    }
+
+    fn from_trie(trie: TrieNode, rule_set: RuleSetKind) -> Self {
         Self {
-            trie: build_rules(),
+            trie,
             buffer: String::new(),
             output: String::new(),
+            rule_set,
         }
     }
 
@@ -67,6 +121,13 @@ impl RomajiConverter {
 
     /// Try to convert the current buffer
     fn try_convert(&mut self) -> ConversionEvent {
+        match self.rule_set {
+            RuleSetKind::Legacy => self.try_convert_legacy(),
+            RuleSetKind::Table => self.try_convert_table(),
+        }
+    }
+
+    fn try_convert_legacy(&mut self) -> ConversionEvent {
         // Special case: "nn" + another character
         // "nn" is ALWAYS treated as a single ん, regardless of what follows.
         // This matches IME behavior where "nn" is the deliberate way to enter ん.
@@ -188,6 +249,58 @@ impl RomajiConverter {
 
                 return ConversionEvent::PassThrough(first_char);
             }
+        }
+
+        ConversionEvent::Buffered
+    }
+
+    fn try_convert_table(&mut self) -> ConversionEvent {
+        let search = self.trie.search_longest(&self.buffer);
+
+        if let Some(output) = search.output {
+            if search.has_continuation && search.matched_len == self.buffer.len() {
+                return ConversionEvent::Buffered;
+            }
+
+            self.output.push_str(output);
+            self.buffer.drain(..search.matched_len);
+            return self.convert_with_remainder(output.to_string());
+        }
+
+        if search.matched_len == 0 {
+            let Some(first_char) = self.buffer.chars().next() else {
+                return ConversionEvent::Buffered;
+            };
+
+            let mut node = &self.trie;
+            let mut on_valid_path = true;
+            for ch in self.buffer.chars() {
+                if let Some(child) = node.children.get(&ch) {
+                    node = child;
+                } else {
+                    on_valid_path = false;
+                    break;
+                }
+            }
+
+            if on_valid_path {
+                return ConversionEvent::Buffered;
+            }
+
+            self.buffer.remove(0);
+            self.output.push(first_char);
+
+            if !self.buffer.is_empty() {
+                let next_event = self.try_convert_table();
+                if matches!(
+                    next_event,
+                    ConversionEvent::Converted(_) | ConversionEvent::PassThrough(_)
+                ) {
+                    return next_event;
+                }
+            }
+
+            return ConversionEvent::PassThrough(first_char);
         }
 
         ConversionEvent::Buffered
@@ -472,5 +585,32 @@ mod tests {
         assert_eq!(conv.output(), "か");
         assert_eq!(conv.buffer(), "k");
         assert_eq!(conv.full_text_katakana(), "カk");
+    }
+
+    #[test]
+    fn test_tsv_converter_respects_custom_rule() {
+        let mut conv = RomajiConverter::from_tsv_str("k\tき\nkk\tきん\n").unwrap();
+        conv.push('k');
+        assert_eq!(conv.buffer(), "k");
+
+        conv.push('k');
+        assert_eq!(conv.output(), "きん");
+        assert_eq!(conv.buffer(), "");
+    }
+
+    #[test]
+    fn test_tsv_converter_supports_comments_and_crlf() {
+        let mut conv = RomajiConverter::from_tsv_str("# comment\r\na\tあ\r\n").unwrap();
+        conv.push('a');
+        assert_eq!(conv.output(), "あ");
+    }
+
+    #[test]
+    fn test_tsv_converter_passes_through_unknown_input() {
+        let mut conv = RomajiConverter::from_tsv_str("nn\tん\n").unwrap();
+        conv.push('n');
+        conv.push('x');
+        assert_eq!(conv.output(), "nx");
+        assert_eq!(conv.buffer(), "");
     }
 }
