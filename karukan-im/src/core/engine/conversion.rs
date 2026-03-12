@@ -165,6 +165,8 @@ impl InputMethodEngine {
     /// Called when DOWN/TAB is pressed during live conversion.  Instead of
     /// Start kanji conversion
     pub(super) fn start_conversion(&mut self) -> EngineResult {
+        self.direct_mode = None;
+
         // Flush any remaining romaji into composed_hiragana
         self.flush_romaji_to_composed();
 
@@ -471,6 +473,10 @@ impl InputMethodEngine {
 
     /// Process key in conversion state
     pub(super) fn process_key_conversion(&mut self, key: &KeyEvent) -> EngineResult {
+        if let Some(result) = self.handle_function_key(key.keysym) {
+            return result;
+        }
+
         match key.keysym {
             Keysym::RETURN => self.commit_conversion(),
             Keysym::ESCAPE => self.cancel_conversion(),
@@ -542,6 +548,8 @@ impl InputMethodEngine {
 
         self.state = InputState::Empty;
         self.input_buf.text.clear();
+        self.raw_units.clear();
+        self.direct_mode = None;
 
         EngineResult::consumed()
             .with_action(EngineAction::UpdatePreedit(Preedit::new()))
@@ -562,6 +570,8 @@ impl InputMethodEngine {
 
         self.state = InputState::Empty;
         self.input_buf.text.clear();
+        self.raw_units.clear();
+        self.direct_mode = None;
 
         // Start new input with the character
         let new_input_result = self.start_input(ch);
@@ -584,6 +594,8 @@ impl InputMethodEngine {
         if reading.is_empty() {
             self.state = InputState::Empty;
             self.input_buf.clear();
+            self.raw_units.clear();
+            self.direct_mode = None;
             return EngineResult::consumed()
                 .with_action(EngineAction::UpdatePreedit(Preedit::new()))
                 .with_action(EngineAction::HideCandidates)
@@ -593,6 +605,7 @@ impl InputMethodEngine {
         // Set up composed_hiragana with the reading
         self.input_buf.text = reading.clone();
         self.input_buf.cursor_pos = self.input_buf.text.chars().count();
+        self.direct_mode = None;
 
         // Reset romaji converter and set output to reading
         self.converters.romaji.reset();

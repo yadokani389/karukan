@@ -118,6 +118,24 @@ pub(crate) enum InputMode {
     Alphabet,
 }
 
+/// Letter case for direct alphabet conversion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DirectAlphabetCase {
+    Lower,
+    Upper,
+    Capitalized,
+}
+
+/// Temporary direct conversion mode triggered by function keys.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DirectConversionMode {
+    Hiragana,
+    KatakanaFullwidth,
+    KatakanaHalfwidth,
+    AlphabetFullwidth(DirectAlphabetCase),
+    AlphabetHalfwidth(DirectAlphabetCase),
+}
+
 /// Live conversion state: enabled flag and current converted text
 #[derive(Debug, Clone, Default)]
 pub(in crate::core) struct LiveConversion {

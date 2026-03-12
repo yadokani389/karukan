@@ -3,10 +3,7 @@
 use super::*;
 
 impl InputMethodEngine {
-    /// Build display text from the input buffer and romaji buffer
-    /// Format: composed[:cursor] + romaji_buffer + composed[cursor:]
-    /// In katakana mode, the composed parts are converted to katakana.
-    pub(super) fn build_input_display(&self) -> String {
+    fn current_input_parts(&self) -> (String, String, String) {
         let before: String = self
             .input_buf
             .text
@@ -19,7 +16,109 @@ impl InputMethodEngine {
             .chars()
             .skip(self.input_buf.cursor_pos)
             .collect();
-        let buffer = self.converters.romaji.buffer();
+        let buffer = self.converters.romaji.buffer().to_string();
+
+        (before, buffer, after)
+    }
+
+    fn direct_mode_indicator(&self, mode: DirectConversionMode) -> &'static str {
+        match mode {
+            DirectConversionMode::Hiragana => "[あ]",
+            DirectConversionMode::KatakanaFullwidth => "[カ]",
+            DirectConversionMode::KatakanaHalfwidth => "[ｶ]",
+            DirectConversionMode::AlphabetFullwidth(_) => "[Ａ]",
+            DirectConversionMode::AlphabetHalfwidth(_) => "[A]",
+        }
+    }
+
+    fn apply_direct_alphabet_case(text: &str, case: DirectAlphabetCase) -> String {
+        match case {
+            DirectAlphabetCase::Lower => text.to_lowercase(),
+            DirectAlphabetCase::Upper => text.to_uppercase(),
+            DirectAlphabetCase::Capitalized => {
+                let mut chars = text.chars();
+                let Some(first) = chars.next() else {
+                    return String::new();
+                };
+                format!("{}{}", first.to_uppercase(), chars.as_str().to_lowercase())
+            }
+        }
+    }
+
+    fn current_raw_parts(&self) -> (String, String, String) {
+        (
+            self.raw_text_before_cursor(),
+            self.converters.romaji.buffer().to_string(),
+            self.raw_text_after_cursor(),
+        )
+    }
+
+    fn convert_direct_kana_text(&self, text: &str, mode: DirectConversionMode) -> String {
+        match mode {
+            DirectConversionMode::Hiragana => karukan_engine::kana::katakana_to_hiragana(
+                &karukan_engine::kana::normalize_nfkc(text),
+            ),
+            DirectConversionMode::KatakanaFullwidth => karukan_engine::kana::hiragana_to_katakana(
+                &karukan_engine::kana::katakana_to_hiragana(&karukan_engine::kana::normalize_nfkc(
+                    text,
+                )),
+            ),
+            DirectConversionMode::KatakanaHalfwidth => {
+                karukan_engine::kana::kana_to_halfwidth_katakana(text)
+            }
+            DirectConversionMode::AlphabetFullwidth(_)
+            | DirectConversionMode::AlphabetHalfwidth(_) => text.to_string(),
+        }
+    }
+
+    fn convert_direct_raw_text(&self, text: &str, mode: DirectConversionMode) -> String {
+        match mode {
+            DirectConversionMode::AlphabetFullwidth(case) => {
+                karukan_engine::kana::ascii_to_fullwidth(&Self::apply_direct_alphabet_case(
+                    text, case,
+                ))
+            }
+            DirectConversionMode::AlphabetHalfwidth(case) => Self::apply_direct_alphabet_case(
+                &karukan_engine::kana::ascii_to_halfwidth(text),
+                case,
+            ),
+            DirectConversionMode::Hiragana
+            | DirectConversionMode::KatakanaFullwidth
+            | DirectConversionMode::KatakanaHalfwidth => self.convert_direct_kana_text(text, mode),
+        }
+    }
+
+    fn direct_conversion_display(&self, mode: DirectConversionMode) -> (String, usize) {
+        let (before, buffer, after) = match mode {
+            DirectConversionMode::AlphabetFullwidth(_)
+            | DirectConversionMode::AlphabetHalfwidth(_) => self.current_raw_parts(),
+            DirectConversionMode::Hiragana
+            | DirectConversionMode::KatakanaFullwidth
+            | DirectConversionMode::KatakanaHalfwidth => self.current_input_parts(),
+        };
+        let display_before = self.convert_direct_raw_text(&format!("{}{}", before, buffer), mode);
+        let display_after = self.convert_direct_raw_text(&after, mode);
+        let caret = display_before.chars().count();
+        (format!("{}{}", display_before, display_after), caret)
+    }
+
+    pub(super) fn direct_commit_text(&self) -> Option<String> {
+        let mode = self.direct_mode?;
+        let (before, buffer, after) = match mode {
+            DirectConversionMode::AlphabetFullwidth(_)
+            | DirectConversionMode::AlphabetHalfwidth(_) => self.current_raw_parts(),
+            DirectConversionMode::Hiragana
+            | DirectConversionMode::KatakanaFullwidth
+            | DirectConversionMode::KatakanaHalfwidth => self.current_input_parts(),
+        };
+        Some(self.convert_direct_raw_text(&format!("{}{}{}", before, buffer, after), mode))
+    }
+
+    /// Build display text from the input buffer and romaji buffer
+    /// Format: composed[:cursor] + romaji_buffer + composed[cursor:]
+    /// In katakana mode, the composed parts are converted to katakana.
+    pub(super) fn build_input_display(&self) -> String {
+        let (before, buffer, after) = self.current_input_parts();
 
         let katakana = self.input_mode == InputMode::Katakana;
         let display_before = if katakana {
@@ -45,7 +144,9 @@ impl InputMethodEngine {
     /// If live conversion text is present, shows live_text + romaji_buffer with caret at end.
     /// Otherwise shows the input buffer display with cursor-based caret.
     pub(super) fn build_composing_preedit(&self) -> Preedit {
-        let (display, caret) = if !self.live.text.is_empty() {
+        let (display, caret) = if let Some(mode) = self.direct_mode {
+            self.direct_conversion_display(mode)
+        } else if !self.live.text.is_empty() {
             let buffer = self.converters.romaji.buffer();
             let display = format!("{}{}", self.live.text, buffer);
             let caret = display.chars().count();
@@ -98,6 +199,15 @@ impl InputMethodEngine {
 
     /// Get the current mode indicator string
     pub(super) fn mode_indicator(&self) -> String {
+        if let Some(mode) = self.direct_mode {
+            let base = self.direct_mode_indicator(mode);
+            return if self.live.enabled {
+                format!("⚡{}", base)
+            } else {
+                base.to_string()
+            };
+        }
+
         let base = match self.input_mode {
             InputMode::Alphabet => "[A]",
             InputMode::Katakana => "[カ]",

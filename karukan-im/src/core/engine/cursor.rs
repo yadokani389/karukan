@@ -9,6 +9,7 @@ impl InputMethodEngine {
             self.flush_romaji_to_composed();
             self.converters.romaji.reset();
         }
+        self.direct_mode = None;
         self.live.text.clear();
         self.input_buf.cursor_pos = new_pos;
         let preedit = self.set_composing_state();
@@ -23,6 +24,7 @@ impl InputMethodEngine {
         // If romaji buffer is not empty, backspace from buffer (not from composed text)
         if !self.converters.romaji.buffer().is_empty() {
             self.converters.romaji.backspace();
+            self.direct_mode = None;
             if let Some(result) = self.try_reset_if_empty() {
                 return result;
             }
@@ -35,11 +37,14 @@ impl InputMethodEngine {
 
         // Remove character before cursor from composed_hiragana
         if self.input_buf.cursor_pos > 0 {
+            self.remove_raw_before_cursor();
             self.input_buf.remove_char_before_cursor();
         } else {
             // Nothing to delete
             return EngineResult::consumed();
         }
+
+        self.direct_mode = None;
 
         if let Some(result) = self.try_reset_if_empty() {
             return result;
@@ -69,9 +74,12 @@ impl InputMethodEngine {
         }
 
         // Delete character at cursor position
+        self.remove_raw_at_cursor();
         if self.input_buf.remove_char_at_cursor().is_none() {
             return EngineResult::consumed();
         }
+
+        self.direct_mode = None;
 
         if let Some(result) = self.try_reset_if_empty() {
             return result;

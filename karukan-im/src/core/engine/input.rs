@@ -17,6 +17,14 @@ fn append_candidates_dedup(target: &mut Vec<Candidate>, source: Vec<Candidate>) 
 impl InputMethodEngine {
     /// Refresh the input state: rebuild preedit and run auto-suggest for candidates.
     pub(super) fn refresh_input_state(&mut self) -> EngineResult {
+        if self.direct_mode.is_some() {
+            let preedit = self.set_composing_state();
+            return EngineResult::consumed()
+                .with_action(EngineAction::UpdatePreedit(preedit))
+                .with_action(EngineAction::HideCandidates)
+                .with_action(EngineAction::UpdateAuxText(self.format_aux_composing()));
+        }
+
         // Alphabet mode with active live conversion: preserve the conversion display
         if self.input_mode == InputMode::Alphabet && !self.live.text.is_empty() {
             let preedit = self.set_composing_state();
@@ -107,6 +115,8 @@ impl InputMethodEngine {
         if key.modifiers.control_key && key.keysym == Keysym::SPACE {
             self.converters.romaji.reset();
             self.input_buf.clear();
+            self.raw_units.clear();
+            self.insert_raw_text(" ");
             self.input_buf.insert("\u{3000}");
             let preedit = self.set_composing_state();
             return EngineResult::consumed()
@@ -143,13 +153,18 @@ impl InputMethodEngine {
     pub(super) fn start_input(&mut self, ch: char) -> EngineResult {
         self.converters.romaji.reset();
         self.input_buf.clear();
+        self.raw_units.clear();
+        self.direct_mode = None;
 
         if self.input_mode == InputMode::Alphabet {
+            self.insert_raw_text(&ch.to_string());
             self.input_buf.insert(&ch.to_string());
         } else {
+            let prev_buffer = self.converters.romaji.buffer().to_string();
             let prev_output_len = 0;
             let event = self.converters.romaji.push(ch);
             let romaji_buffer = self.converters.romaji.buffer().to_string();
+            let combined_raw = format!("{}{}", prev_buffer, ch.to_ascii_lowercase());
 
             // Check for PassThrough FIRST: the converter adds PassThrough chars
             // to its output, so we must check the event before checking output emptiness.
@@ -176,6 +191,12 @@ impl InputMethodEngine {
                     .chars()
                     .skip(prev_output_len)
                     .collect();
+                let consumed_len = combined_raw
+                    .chars()
+                    .count()
+                    .saturating_sub(romaji_buffer.chars().count());
+                let consumed_raw: String = combined_raw.chars().take(consumed_len).collect();
+                self.insert_raw_chunks(Self::split_raw_chunks(&consumed_raw, &new_chars));
                 self.input_buf.insert(&new_chars);
             }
         }
@@ -189,7 +210,9 @@ impl InputMethodEngine {
 
     /// Insert a full-width space (U+3000) at cursor position
     pub(super) fn input_fullwidth_space(&mut self) -> EngineResult {
+        self.insert_raw_text(" ");
         self.input_buf.insert("\u{3000}");
+        self.direct_mode = None;
         self.refresh_input_state()
     }
 
@@ -199,6 +222,10 @@ impl InputMethodEngine {
         key: &KeyEvent,
         shift_active: bool,
     ) -> EngineResult {
+        if let Some(result) = self.handle_function_key(key.keysym) {
+            return result;
+        }
+
         // Handle Ctrl+key shortcuts
         if key.modifiers.control_key {
             match key.keysym {
@@ -234,6 +261,20 @@ impl InputMethodEngine {
                     && !key.modifiers.control_key
                     && !key.modifiers.alt_key
                 {
+                    if self.direct_mode.is_some() {
+                        let is_shift_alpha =
+                            ch.is_ascii_uppercase() || (shift_active && ch.is_ascii_alphabetic());
+                        if is_shift_alpha && self.input_mode != InputMode::Alphabet {
+                            self.input_mode = InputMode::Alphabet;
+                        }
+                        let ch = if self.input_mode == InputMode::Alphabet && is_shift_alpha {
+                            ch.to_ascii_uppercase()
+                        } else {
+                            ch
+                        };
+                        return self.commit_direct_mode_and_continue(ch);
+                    }
+
                     // Detect Shift+letter: shift modifier with alphabetic, OR uppercase keysym.
                     // fcitx5 may resolve Shift into the keysym (sending 'A' instead of 'a'+shift).
                     let is_shift_alpha =
@@ -264,14 +305,19 @@ impl InputMethodEngine {
     /// In alphabet mode, inserts directly; otherwise goes through romaji conversion.
     pub(super) fn input_char(&mut self, ch: char) -> EngineResult {
         if self.input_mode == InputMode::Alphabet {
+            self.insert_raw_text(&ch.to_string());
             self.input_buf.insert(&ch.to_string());
+            self.direct_mode = None;
             return self.refresh_input_state();
         }
 
+        let prev_buffer = self.converters.romaji.buffer().to_string();
         let prev_output_len = self.converters.romaji.output().chars().count();
         let event = self.converters.romaji.push(ch);
         let curr_output_len = self.converters.romaji.output().chars().count();
         let romaji_buffer = self.converters.romaji.buffer().to_string();
+        let combined_raw = format!("{}{}", prev_buffer, ch.to_ascii_lowercase());
+        self.direct_mode = None;
 
         // Track whether composed_hiragana was empty before processing.
         // Used to decide if PassThrough chars should auto-commit (standalone punctuation)
@@ -292,6 +338,12 @@ impl InputMethodEngine {
                 .chars()
                 .skip(prev_output_len)
                 .collect();
+            let consumed_len = combined_raw
+                .chars()
+                .count()
+                .saturating_sub(romaji_buffer.chars().count());
+            let consumed_raw: String = combined_raw.chars().take(consumed_len).collect();
+            self.insert_raw_chunks(Self::split_raw_chunks(&consumed_raw, &new_chars));
             self.input_buf.insert(&new_chars);
         }
 
@@ -306,6 +358,7 @@ impl InputMethodEngine {
         {
             let text = self.input_buf.text.clone();
             self.input_buf.clear();
+            self.raw_units.clear();
             self.state = InputState::Empty;
             return EngineResult::consumed()
                 .with_action(EngineAction::UpdatePreedit(Preedit::new()))
@@ -323,6 +376,10 @@ impl InputMethodEngine {
     /// Commit the current hiragana input (or katakana if in katakana mode)
     /// In live conversion mode, commits the converted text instead of hiragana.
     pub(super) fn commit_composing(&mut self) -> EngineResult {
+        if self.direct_mode.is_some() {
+            return self.commit_direct_mode();
+        }
+
         // Flush any pending romaji into composed_hiragana
         self.flush_romaji_to_composed();
 
@@ -340,6 +397,7 @@ impl InputMethodEngine {
         if text.is_empty() {
             self.state = InputState::Empty;
             self.input_buf.clear();
+            self.raw_units.clear();
             self.live.text.clear();
             return EngineResult::consumed().with_action(EngineAction::HideAuxText);
         }
@@ -349,8 +407,10 @@ impl InputMethodEngine {
 
         self.converters.romaji.reset();
         self.input_buf.clear();
+        self.raw_units.clear();
         self.live.text.clear();
         self.state = InputState::Empty;
+        self.direct_mode = None;
 
         EngineResult::consumed()
             .with_action(EngineAction::UpdatePreedit(Preedit::new()))
@@ -362,6 +422,12 @@ impl InputMethodEngine {
     /// In live conversion mode: first Escape clears live conversion and shows hiragana,
     /// second Escape cancels input entirely.
     pub(super) fn cancel_composing(&mut self) -> EngineResult {
+        if self.direct_mode.is_some() {
+            self.direct_mode = None;
+            self.live.text.clear();
+            return self.refresh_input_state();
+        }
+
         // If live conversion is active, first Escape returns to hiragana display
         if !self.live.text.is_empty() {
             self.live.text.clear();
@@ -374,8 +440,10 @@ impl InputMethodEngine {
 
         self.converters.romaji.reset();
         self.input_buf.clear();
+        self.raw_units.clear();
         self.live.text.clear();
         self.state = InputState::Empty;
+        self.direct_mode = None;
 
         EngineResult::consumed()
             .with_action(EngineAction::UpdatePreedit(Preedit::new()))

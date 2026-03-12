@@ -8,6 +8,7 @@ mod basic;
 mod candidates;
 mod conversion;
 mod cursor;
+mod fkeys;
 mod input_table;
 mod katakana;
 mod live_conversion;

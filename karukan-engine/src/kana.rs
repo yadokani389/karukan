@@ -40,6 +40,137 @@ pub fn katakana_to_hiragana(text: &str) -> String {
         .collect()
 }
 
+/// Convert ASCII text to full-width ASCII.
+pub fn ascii_to_fullwidth(text: &str) -> String {
+    text.chars()
+        .map(|c| match c {
+            ' ' => '\u{3000}',
+            '!'..='~' => std::char::from_u32(c as u32 + 0xfee0).unwrap_or(c),
+            _ => c,
+        })
+        .collect()
+}
+
+/// Convert full-width ASCII text to half-width ASCII.
+pub fn ascii_to_halfwidth(text: &str) -> String {
+    text.chars()
+        .map(|c| match c {
+            '\u{3000}' => ' ',
+            '\u{ff01}'..='\u{ff5e}' => std::char::from_u32(c as u32 - 0xfee0).unwrap_or(c),
+            _ => c,
+        })
+        .collect()
+}
+
+fn katakana_char_to_halfwidth(c: char) -> Option<&'static str> {
+    Some(match c {
+        '。' => "｡",
+        '「' => "｢",
+        '」' => "｣",
+        '、' => "､",
+        '・' => "･",
+        'ー' => "ｰ",
+        'ァ' => "ｧ",
+        'ィ' => "ｨ",
+        'ゥ' => "ｩ",
+        'ェ' => "ｪ",
+        'ォ' => "ｫ",
+        'ャ' => "ｬ",
+        'ュ' => "ｭ",
+        'ョ' => "ｮ",
+        'ッ' => "ｯ",
+        'ア' => "ｱ",
+        'イ' => "ｲ",
+        'ウ' => "ｳ",
+        'エ' => "ｴ",
+        'オ' => "ｵ",
+        'カ' => "ｶ",
+        'キ' => "ｷ",
+        'ク' => "ｸ",
+        'ケ' => "ｹ",
+        'コ' => "ｺ",
+        'サ' => "ｻ",
+        'シ' => "ｼ",
+        'ス' => "ｽ",
+        'セ' => "ｾ",
+        'ソ' => "ｿ",
+        'タ' => "ﾀ",
+        'チ' => "ﾁ",
+        'ツ' => "ﾂ",
+        'テ' => "ﾃ",
+        'ト' => "ﾄ",
+        'ナ' => "ﾅ",
+        'ニ' => "ﾆ",
+        'ヌ' => "ﾇ",
+        'ネ' => "ﾈ",
+        'ノ' => "ﾉ",
+        'ハ' => "ﾊ",
+        'ヒ' => "ﾋ",
+        'フ' => "ﾌ",
+        'ヘ' => "ﾍ",
+        'ホ' => "ﾎ",
+        'マ' => "ﾏ",
+        'ミ' => "ﾐ",
+        'ム' => "ﾑ",
+        'メ' => "ﾒ",
+        'モ' => "ﾓ",
+        'ヤ' => "ﾔ",
+        'ユ' => "ﾕ",
+        'ヨ' => "ﾖ",
+        'ラ' => "ﾗ",
+        'リ' => "ﾘ",
+        'ル' => "ﾙ",
+        'レ' => "ﾚ",
+        'ロ' => "ﾛ",
+        'ワ' => "ﾜ",
+        'ヲ' => "ｦ",
+        'ン' => "ﾝ",
+        'ガ' => "ｶﾞ",
+        'ギ' => "ｷﾞ",
+        'グ' => "ｸﾞ",
+        'ゲ' => "ｹﾞ",
+        'ゴ' => "ｺﾞ",
+        'ザ' => "ｻﾞ",
+        'ジ' => "ｼﾞ",
+        'ズ' => "ｽﾞ",
+        'ゼ' => "ｾﾞ",
+        'ゾ' => "ｿﾞ",
+        'ダ' => "ﾀﾞ",
+        'ヂ' => "ﾁﾞ",
+        'ヅ' => "ﾂﾞ",
+        'デ' => "ﾃﾞ",
+        'ド' => "ﾄﾞ",
+        'バ' => "ﾊﾞ",
+        'ビ' => "ﾋﾞ",
+        'ブ' => "ﾌﾞ",
+        'ベ' => "ﾍﾞ",
+        'ボ' => "ﾎﾞ",
+        'パ' => "ﾊﾟ",
+        'ピ' => "ﾋﾟ",
+        'プ' => "ﾌﾟ",
+        'ペ' => "ﾍﾟ",
+        'ポ' => "ﾎﾟ",
+        'ヴ' => "ｳﾞ",
+        'ヷ' => "ﾜﾞ",
+        'ヺ' => "ｦﾞ",
+        _ => return None,
+    })
+}
+
+/// Convert kana text to half-width katakana.
+pub fn kana_to_halfwidth_katakana(text: &str) -> String {
+    let normalized = normalize_nfkc(text);
+    let fullwidth = hiragana_to_katakana(&katakana_to_hiragana(&normalized));
+    fullwidth
+        .chars()
+        .flat_map(|c| {
+            katakana_char_to_halfwidth(c)
+                .map(|mapped| mapped.chars().collect::<Vec<_>>())
+                .unwrap_or_else(|| vec![c])
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -100,5 +231,18 @@ mod tests {
             normalize_nfkc("\u{ee02}context\u{ee00}input\u{ee01}"),
             "\u{ee02}context\u{ee00}input\u{ee01}"
         );
+    }
+
+    #[test]
+    fn test_ascii_width_conversion() {
+        assert_eq!(ascii_to_fullwidth("Abc 123!?"), "Ａｂｃ　１２３！？");
+        assert_eq!(ascii_to_halfwidth("Ａｂｃ　１２３！？"), "Abc 123!?");
+    }
+
+    #[test]
+    fn test_kana_to_halfwidth_katakana() {
+        assert_eq!(kana_to_halfwidth_katakana("あいうえお"), "ｱｲｳｴｵ");
+        assert_eq!(kana_to_halfwidth_katakana("がっこう"), "ｶﾞｯｺｳ");
+        assert_eq!(kana_to_halfwidth_katakana("コンピューター"), "ｺﾝﾋﾟｭｰﾀｰ");
     }
 }

@@ -118,6 +118,11 @@ I2026-02-24 22:57:54.252982 addonmanager.cpp:195] Loaded addon karukan
 | Home / End | カーソルを先頭 / 末尾に移動 |
 | Ctrl+K | カタカナモードに切り替え |
 | Ctrl+Space | 全角スペースを入力 |
+| F6 | ひらがなに直接変換 |
+| F7 | 全角カタカナに直接変換 |
+| F8 | 半角カタカナに直接変換 |
+| F9 | 全角英数に直接変換 |
+| F10 | 半角英数に直接変換 |
 
 ### 変換モード
 
@@ -138,6 +143,7 @@ I2026-02-24 22:57:54.252982 addonmanager.cpp:195] Loaded addon karukan
 | Ctrl+K | カタカナモードに切り替え |
 | Right Super | 英数字/カタカナ → ひらがなモードに復帰 |
 | Ctrl+Shift+L | ライブ変換のON/OFF |
+| F6 / F7 / F8 / F9 / F10 | 現在の未確定入力を文字種変換して確定/再入力 |
 
 ### 英数字モード
 
@@ -250,4 +256,3 @@ cp dict.bin ~/.local/share/karukan-im/
 Surrounding Textはfcitx5のAPI経由で提供されますが、**多くのLinuxアプリケーションでは未対応です**（参考: [csslayer's blog](https://www.csslayer.info/wordpress/fcitx-dev/why-surrounding-text-is-the-worst-feature-in-the-linux-input-method-world/)）。
 
 > **Note**: Surrounding Text周りの挙動は現在調査中です。正しく動作しない場合があります。
-

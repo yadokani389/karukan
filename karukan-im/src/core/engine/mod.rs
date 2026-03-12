@@ -98,8 +98,12 @@ pub struct InputMethodEngine {
     metrics: ConversionMetrics,
     /// Current input mode (Hiragana, Katakana, or Alphabet)
     input_mode: InputMode,
+    /// Temporary direct conversion mode triggered by F6-F10.
+    direct_mode: Option<DirectConversionMode>,
     /// Composed input buffer (hiragana text, cursor position)
     input_buf: InputBuffer,
+    /// Raw input chunks aligned with `input_buf.text` characters.
+    raw_units: Vec<String>,
     /// Live conversion state
     live: LiveConversion,
     /// Dictionaries (system, user)
@@ -122,7 +126,9 @@ impl InputMethodEngine {
             config: EngineConfig::default(),
             metrics: ConversionMetrics::default(),
             input_mode: InputMode::Hiragana,
+            direct_mode: None,
             input_buf: InputBuffer::new(),
+            raw_units: Vec::new(),
             live: LiveConversion::default(),
             dicts: Dictionaries::default(),
             learning: None,
@@ -190,7 +196,9 @@ impl InputMethodEngine {
         self.state = InputState::Empty;
         self.converters.romaji.reset();
         self.input_mode = InputMode::Hiragana;
+        self.direct_mode = None;
         self.input_buf.clear();
+        self.raw_units.clear();
         self.live.text.clear();
         self.metrics = ConversionMetrics::default();
     }
@@ -201,6 +209,8 @@ impl InputMethodEngine {
         if self.build_input_display().is_empty() {
             self.state = InputState::Empty;
             self.input_buf.clear();
+            self.raw_units.clear();
+            self.direct_mode = None;
             Some(
                 EngineResult::consumed()
                     .with_action(EngineAction::UpdatePreedit(Preedit::new()))
@@ -224,6 +234,70 @@ impl InputMethodEngine {
         preedit
     }
 
+    fn raw_text_before_cursor(&self) -> String {
+        let split = self.input_buf.cursor_pos.min(self.raw_units.len());
+        self.raw_units[..split].concat()
+    }
+
+    fn raw_text_after_cursor(&self) -> String {
+        let split = self.input_buf.cursor_pos.min(self.raw_units.len());
+        self.raw_units[split..].concat()
+    }
+
+    fn split_raw_chunks(raw: &str, output: &str) -> Vec<String> {
+        let output_len = output.chars().count();
+        if output_len == 0 {
+            return Vec::new();
+        }
+
+        let raw_chars: Vec<char> = raw.chars().collect();
+        let mut start = 0;
+        let mut remaining_raw = raw_chars.len();
+        let mut remaining_output = output_len;
+        let mut chunks = Vec::with_capacity(output_len);
+
+        for _ in 0..output_len {
+            let take = if remaining_output == 1 {
+                remaining_raw
+            } else {
+                remaining_raw.div_ceil(remaining_output)
+            };
+            let end = start + take.min(remaining_raw);
+            chunks.push(raw_chars[start..end].iter().collect());
+            let consumed = end - start;
+            start = end;
+            remaining_raw -= consumed;
+            remaining_output -= 1;
+        }
+
+        chunks
+    }
+
+    fn insert_raw_chunks(&mut self, chunks: Vec<String>) {
+        if chunks.is_empty() {
+            return;
+        }
+
+        let insert_at = self.input_buf.cursor_pos.min(self.raw_units.len());
+        self.raw_units.splice(insert_at..insert_at, chunks);
+    }
+
+    fn insert_raw_text(&mut self, text: &str) {
+        self.insert_raw_chunks(text.chars().map(|ch| ch.to_string()).collect());
+    }
+
+    fn remove_raw_before_cursor(&mut self) {
+        if self.input_buf.cursor_pos > 0 {
+            self.raw_units.remove(self.input_buf.cursor_pos - 1);
+        }
+    }
+
+    fn remove_raw_at_cursor(&mut self) {
+        if self.input_buf.cursor_pos < self.raw_units.len() {
+            self.raw_units.remove(self.input_buf.cursor_pos);
+        }
+    }
+
     /// Convert hiragana in input_buf to katakana permanently.
     /// Called when leaving Katakana mode so the preedit doesn't revert.
     fn bake_katakana(&mut self) {
@@ -237,6 +311,7 @@ impl InputMethodEngine {
         if self.converters.romaji.buffer().is_empty() {
             return;
         }
+        let raw = self.converters.romaji.buffer().to_string();
         let prev_output_len = self.converters.romaji.output().chars().count();
         let _flushed = self.converters.romaji.flush();
         // flush() appends converted buffer to output internally
@@ -248,6 +323,8 @@ impl InputMethodEngine {
             .skip(prev_output_len)
             .collect();
         if !new_from_flush.is_empty() {
+            let raw_chunks = Self::split_raw_chunks(&raw, &new_from_flush);
+            self.insert_raw_chunks(raw_chunks);
             self.input_buf.insert(&new_from_flush);
         }
     }
@@ -321,6 +398,7 @@ impl InputMethodEngine {
                 self.bake_katakana();
             }
             self.input_mode = InputMode::Hiragana;
+            self.direct_mode = None;
             self.flush_romaji_to_composed();
             let aux = self.format_aux_composing();
             if matches!(self.state, InputState::Composing { .. }) {
@@ -412,7 +490,9 @@ impl InputMethodEngine {
                 self.converters.romaji.reset();
                 self.input_buf.clear();
                 self.live.text.clear();
+                self.direct_mode = None;
                 self.state = InputState::Empty;
+                self.raw_units.clear();
                 self.surrounding_context = None;
                 text
             }
@@ -424,6 +504,8 @@ impl InputMethodEngine {
                     self.record_learning(reading, &text);
                 }
                 self.input_buf.clear();
+                self.direct_mode = None;
+                self.raw_units.clear();
                 self.state = InputState::Empty;
                 self.surrounding_context = None;
                 text
