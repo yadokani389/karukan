@@ -70,6 +70,14 @@ pub struct EngineConfig {
     pub live_conversion: bool,
     /// Number of conversion candidates for explicit conversion (Space key)
     pub num_candidates: usize,
+    /// Whether ASCII symbols should be converted to full-width variants
+    pub fullwidth_symbols: bool,
+    /// Whether comma should be converted to full-width comma when Japanese punctuation is off
+    pub fullwidth_comma: bool,
+    /// Whether period should be converted to full-width period when Japanese punctuation is off
+    pub fullwidth_period: bool,
+    /// Whether punctuation should be converted to Japanese punctuation such as 、。・「」ー
+    pub japanese_punctuation: bool,
     /// Maximum context length to display
     pub display_context_len: usize,
     /// Maximum context length for API calls (to avoid overflow)
@@ -90,6 +98,10 @@ impl Default for EngineConfig {
         Self {
             live_conversion: false,
             num_candidates: 3, // Space conversion: beam search with 3 candidates
+            fullwidth_symbols: false,
+            fullwidth_comma: false,
+            fullwidth_period: false,
+            japanese_punctuation: true,
             display_context_len: 10,
             max_api_context_len: 10,
             short_input_threshold: 10,

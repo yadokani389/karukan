@@ -14,7 +14,120 @@ fn append_candidates_dedup(target: &mut Vec<Candidate>, source: Vec<Candidate>) 
     }
 }
 
+fn ascii_symbol_to_fullwidth(c: char) -> Option<char> {
+    match c {
+        '!'..='~' if c.is_ascii_punctuation() => std::char::from_u32(c as u32 + 0xfee0),
+        _ => None,
+    }
+}
+
 impl InputMethodEngine {
+    fn normalize_input_symbol(&self, ch: char) -> char {
+        if !ch.is_ascii() {
+            return ch;
+        }
+
+        match ch {
+            ',' => {
+                if self.config.japanese_punctuation {
+                    '、'
+                } else if self.config.fullwidth_comma {
+                    '，'
+                } else {
+                    ','
+                }
+            }
+            '.' => {
+                if self.config.japanese_punctuation {
+                    '。'
+                } else if self.config.fullwidth_period {
+                    '．'
+                } else {
+                    '.'
+                }
+            }
+            '/' => {
+                if self.config.japanese_punctuation {
+                    '・'
+                } else if self.config.fullwidth_symbols {
+                    '／'
+                } else {
+                    '/'
+                }
+            }
+            '[' => {
+                if self.config.japanese_punctuation {
+                    '「'
+                } else if self.config.fullwidth_symbols {
+                    '［'
+                } else {
+                    '['
+                }
+            }
+            ']' => {
+                if self.config.japanese_punctuation {
+                    '」'
+                } else if self.config.fullwidth_symbols {
+                    '］'
+                } else {
+                    ']'
+                }
+            }
+            '-' => {
+                if self.config.japanese_punctuation {
+                    'ー'
+                } else if self.config.fullwidth_symbols {
+                    '－'
+                } else {
+                    '-'
+                }
+            }
+            '~' => {
+                if self.config.fullwidth_symbols {
+                    '～'
+                } else {
+                    '~'
+                }
+            }
+            _ => {
+                if ch.is_ascii_punctuation() {
+                    if self.config.fullwidth_symbols {
+                        ascii_symbol_to_fullwidth(ch).unwrap_or(ch)
+                    } else {
+                        ch
+                    }
+                } else {
+                    ch
+                }
+            }
+        }
+    }
+
+    pub(super) fn normalize_input_text(&self, text: &str) -> String {
+        text.chars()
+            .map(|ch| self.normalize_input_symbol(ch))
+            .collect()
+    }
+
+    fn normalize_converted_text(&self, raw: &str, output: &str) -> String {
+        if raw.chars().count() != output.chars().count() {
+            return output.to_string();
+        }
+
+        raw.chars()
+            .zip(output.chars())
+            .map(|(raw_ch, output_ch)| {
+                if (output_ch == raw_ch && raw_ch.is_ascii_punctuation())
+                    || matches!(raw_ch, ',' | '.' | '/' | '[' | ']' | '-')
+                {
+                    self.normalize_input_symbol(raw_ch)
+                } else {
+                    output_ch
+                }
+            })
+            .collect()
+    }
+
     /// Refresh the input state: rebuild preedit and run auto-suggest for candidates.
     pub(super) fn refresh_input_state(&mut self) -> EngineResult {
         if self.direct_mode.is_some() {
@@ -68,7 +181,7 @@ impl InputMethodEngine {
 
         // Live conversion mode: show converted text in preedit
         if self.live.enabled && self.input_mode != InputMode::Katakana {
-            self.live.text = candidates[0].clone();
+            self.live.text = self.normalize_input_text(&candidates[0]);
             let preedit = self.set_composing_state();
             let mut result =
                 EngineResult::consumed().with_action(EngineAction::UpdatePreedit(preedit));
@@ -157,8 +270,9 @@ impl InputMethodEngine {
         self.direct_mode = None;
 
         if self.input_mode == InputMode::Alphabet {
+            let text = self.normalize_input_text(&ch.to_string());
             self.insert_raw_text(&ch.to_string());
-            self.input_buf.insert(&ch.to_string());
+            self.input_buf.insert(&text);
         } else {
             let prev_buffer = self.converters.romaji.buffer().to_string();
             let prev_output_len = 0;
@@ -173,7 +287,8 @@ impl InputMethodEngine {
                 && !c.is_ascii_digit()
             {
                 self.converters.romaji.reset();
-                return EngineResult::consumed().with_action(EngineAction::Commit(c.to_string()));
+                let text = self.normalize_input_text(&c.to_string());
+                return EngineResult::consumed().with_action(EngineAction::Commit(text));
             }
             // For digits, fall through to enter Composing normally
 
@@ -196,6 +311,7 @@ impl InputMethodEngine {
                     .count()
                     .saturating_sub(romaji_buffer.chars().count());
                 let consumed_raw: String = combined_raw.chars().take(consumed_len).collect();
+                let new_chars = self.normalize_converted_text(&consumed_raw, &new_chars);
                 self.insert_raw_chunks(Self::split_raw_chunks(&consumed_raw, &new_chars));
                 self.input_buf.insert(&new_chars);
             }
@@ -305,8 +421,9 @@ impl InputMethodEngine {
     /// In alphabet mode, inserts directly; otherwise goes through romaji conversion.
     pub(super) fn input_char(&mut self, ch: char) -> EngineResult {
         if self.input_mode == InputMode::Alphabet {
+            let text = self.normalize_input_text(&ch.to_string());
             self.insert_raw_text(&ch.to_string());
-            self.input_buf.insert(&ch.to_string());
+            self.input_buf.insert(&text);
             self.direct_mode = None;
             return self.refresh_input_state();
         }
@@ -343,6 +460,7 @@ impl InputMethodEngine {
                 .count()
                 .saturating_sub(romaji_buffer.chars().count());
             let consumed_raw: String = combined_raw.chars().take(consumed_len).collect();
+            let new_chars = self.normalize_converted_text(&consumed_raw, &new_chars);
             self.insert_raw_chunks(Self::split_raw_chunks(&consumed_raw, &new_chars));
             self.input_buf.insert(&new_chars);
         }

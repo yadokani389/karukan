@@ -158,6 +158,21 @@ fn test_live_conversion_build_preedit() {
     assert_eq!(preedit.caret(), 2); // 漢字 = 2 chars
 }
 
+#[test]
+fn test_live_conversion_normalizes_symbol_width() {
+    let mut engine = InputMethodEngine::with_config(EngineConfig {
+        live_conversion: true,
+        fullwidth_symbols: true,
+        japanese_punctuation: false,
+        ..EngineConfig::default()
+    });
+
+    engine.live.text = engine.normalize_input_text("abc!?");
+
+    let preedit = engine.build_composing_preedit();
+    assert_eq!(preedit.text(), "abc！？");
+}
+
 // --- Ctrl+Space full-width space tests ---
 
 #[test]

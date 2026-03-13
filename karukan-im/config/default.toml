@@ -8,6 +8,14 @@ strategy = "adaptive"
 live_conversion = false
 # 変換候補数（Space押下時）
 num_candidates = 9
+# 一般記号を全角で入力する（例: ? -> ？, < -> ＜）
+fullwidth_symbols = false
+# カンマを全角で入力する（japanese_punctuation=true のときは無視）
+fullwidth_comma = false
+# ピリオドを全角で入力する（japanese_punctuation=true のときは無視）
+fullwidth_period = false
+# 句読点を和文記号で入力する（例: , -> 、, . -> 。, / -> ・）
+japanese_punctuation = true
 # 周辺テキスト（カーソル左側の確定済みテキスト）を変換時のコンテキストとして使用する
 use_context = true
 # 変換API に渡す周辺テキストの最大文字数

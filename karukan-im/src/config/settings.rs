@@ -46,6 +46,14 @@ pub struct ConversionSettings {
     pub live_conversion: bool,
     /// Number of candidates to show on Space conversion
     pub num_candidates: usize,
+    /// Convert ASCII punctuation to full-width forms during input
+    pub fullwidth_symbols: bool,
+    /// Convert comma to full-width comma when Japanese punctuation is disabled
+    pub fullwidth_comma: bool,
+    /// Convert period to full-width period when Japanese punctuation is disabled
+    pub fullwidth_period: bool,
+    /// Convert punctuation keys to Japanese punctuation such as 、。・「」ー
+    pub japanese_punctuation: bool,
     /// Use surrounding text (text left of cursor) as context for conversion
     pub use_context: bool,
     /// Maximum number of surrounding text characters passed to the conversion API
@@ -211,6 +219,10 @@ mod tests {
         let settings = Settings::default();
         assert!(!settings.conversion.live_conversion);
         assert_eq!(settings.conversion.num_candidates, 9);
+        assert!(!settings.conversion.fullwidth_symbols);
+        assert!(!settings.conversion.fullwidth_comma);
+        assert!(!settings.conversion.fullwidth_period);
+        assert!(settings.conversion.japanese_punctuation);
         assert!(settings.conversion.use_context);
         assert_eq!(settings.conversion.max_context_length, 20);
     }
@@ -235,6 +247,10 @@ mod tests {
 [conversion]
 live_conversion = true
 num_candidates = 5
+fullwidth_symbols = true
+fullwidth_comma = true
+fullwidth_period = true
+japanese_punctuation = false
 use_context = false
 "#
         )
@@ -244,6 +260,10 @@ use_context = false
         let settings = Settings::load_from(&path).unwrap();
         assert!(settings.conversion.live_conversion);
         assert_eq!(settings.conversion.num_candidates, 5);
+        assert!(settings.conversion.fullwidth_symbols);
+        assert!(settings.conversion.fullwidth_comma);
+        assert!(settings.conversion.fullwidth_period);
+        assert!(!settings.conversion.japanese_punctuation);
         assert!(!settings.conversion.use_context);
     }
 
@@ -265,6 +285,29 @@ input_table_path = "/tmp/AZIK.tsv"
             settings.conversion.input_table_path.as_deref(),
             Some("/tmp/AZIK.tsv")
         );
+    }
+
+    #[test]
+    fn test_symbol_settings_load() {
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            r#"
+[conversion]
+fullwidth_symbols = true
+fullwidth_comma = true
+fullwidth_period = true
+japanese_punctuation = false
+"#
+        )
+        .unwrap();
+
+        let path = file.path().to_path_buf();
+        let settings = Settings::load_from(&path).unwrap();
+        assert!(settings.conversion.fullwidth_symbols);
+        assert!(settings.conversion.fullwidth_comma);
+        assert!(settings.conversion.fullwidth_period);
+        assert!(!settings.conversion.japanese_punctuation);
     }
 
     #[test]

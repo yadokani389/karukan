@@ -112,10 +112,17 @@ impl KarukanEngine {
     fn new() -> Self {
         // Load user settings from config.toml, fall back to defaults
         let settings = Settings::load().unwrap_or_default();
+        Self::from_settings(settings)
+    }
 
+    fn from_settings(settings: Settings) -> Self {
         let config = EngineConfig {
             live_conversion: settings.conversion.live_conversion,
             num_candidates: settings.conversion.num_candidates,
+            fullwidth_symbols: settings.conversion.fullwidth_symbols,
+            fullwidth_comma: settings.conversion.fullwidth_comma,
+            fullwidth_period: settings.conversion.fullwidth_period,
+            japanese_punctuation: settings.conversion.japanese_punctuation,
             display_context_len: 10,
             max_api_context_len: if settings.conversion.use_context {
                 settings.conversion.max_context_length
@@ -138,6 +145,11 @@ impl KarukanEngine {
             last_conversion_ms: 0,
             last_process_key_ms: 0,
         }
+    }
+
+    #[cfg(test)]
+    fn new_for_test() -> Self {
+        Self::from_settings(Settings::default())
     }
 
     fn clear_flags(&mut self) {

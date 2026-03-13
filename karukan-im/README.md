@@ -160,6 +160,10 @@ I2026-02-24 22:57:54.252982 addonmanager.cpp:195] Loaded addon karukan
 strategy = "adaptive"           # 変換ストラテジー（adaptive / light / main）
 live_conversion = false         # 起動時からライブ変換を有効にする
 num_candidates = 9              # 変換候補数（Space押下時）
+fullwidth_symbols = false       # 一般記号を全角で入力する（例: ? -> ？, < -> ＜）
+fullwidth_comma = false         # カンマを全角で入力する（, -> ，）
+fullwidth_period = false        # ピリオドを全角で入力する（. -> ．）
+japanese_punctuation = true     # 句読点を和文記号で入力する（, -> 、, . -> 。, / -> ・）
 n_threads = 4                   # 推論スレッド数（0 = 全コア使用）
 model = "jinen-v1-small-q5"     # メインモデル（モデルID or GGUFパス）
 light_model = "jinen-v1-xsmall-q5"  # 軽量モデル（ビームサーチ・長文用）
@@ -174,6 +178,17 @@ dict_path = "/path/to/dict.bin" # システム辞書パス（省略時: ~/.local
 enabled = true                 # 変換学習の有効/無効
 max_entries = 10000            # 学習エントリの最大数
 ```
+
+### Symbol Input Style
+
+記号入力は以下の設定で調整できます。
+
+- `fullwidth_symbols = true`: `? ! / [ ] < > ( ) + =` などの一般記号を全角化
+- `fullwidth_comma = true`: `,` を `，` に変換
+- `fullwidth_period = true`: `.` を `．` に変換
+- `japanese_punctuation = true`: `, . / [ ] -` を `、。・「」ー` に変換
+
+`japanese_punctuation = true` のときは、`,` と `.` は `fullwidth_comma` / `fullwidth_period` よりも和文句読点が優先されます。
 
 ### Conversion Strategy
 

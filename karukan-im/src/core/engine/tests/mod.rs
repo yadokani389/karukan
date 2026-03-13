@@ -54,3 +54,18 @@ fn make_live_conversion_engine() -> InputMethodEngine {
     engine.live.enabled = true;
     engine
 }
+
+fn make_symbol_engine(
+    fullwidth_symbols: bool,
+    fullwidth_comma: bool,
+    fullwidth_period: bool,
+    japanese_punctuation: bool,
+) -> InputMethodEngine {
+    InputMethodEngine::with_config(EngineConfig {
+        fullwidth_symbols,
+        fullwidth_comma,
+        fullwidth_period,
+        japanese_punctuation,
+        ..EngineConfig::default()
+    })
+}

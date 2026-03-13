@@ -124,3 +124,120 @@ fn test_digit_in_middle_of_hiragana() {
     assert!(matches!(engine.state(), InputState::Composing { .. }));
     assert_eq!(engine.preedit().unwrap().text(), "あ2");
 }
+
+#[test]
+fn test_fullwidth_symbols_convert_question_mark() {
+    let mut engine = make_symbol_engine(true, false, false, false);
+
+    engine.process_key(&press('?'));
+    assert_eq!(engine.preedit().unwrap().text(), "？");
+
+    let result = engine.process_key(&press_key(Keysym::RETURN));
+    let has_commit = result
+        .actions
+        .iter()
+        .any(|a| matches!(a, EngineAction::Commit(text) if text == "？"));
+    assert!(has_commit, "'?' should commit as full-width question mark");
+}
+
+#[test]
+fn test_fullwidth_symbols_convert_passthrough_in_preedit() {
+    let mut engine = make_symbol_engine(true, false, false, false);
+
+    engine.process_key(&press('a'));
+    engine.process_key(&press('<'));
+
+    assert_eq!(engine.preedit().unwrap().text(), "あ＜");
+}
+
+#[test]
+fn test_converted_exclamation_and_question_stay_fullwidth_during_japanese_input() {
+    let mut engine = make_symbol_engine(false, false, false, true);
+
+    engine.process_key(&press('a'));
+    engine.process_key(&press('!'));
+    engine.process_key(&press('?'));
+
+    assert_eq!(engine.preedit().unwrap().text(), "あ！？");
+}
+
+#[test]
+fn test_japanese_punctuation_overrides_comma_and_period() {
+    let mut engine = make_symbol_engine(true, true, true, true);
+
+    engine.process_key(&press(','));
+    assert_eq!(engine.preedit().unwrap().text(), "、");
+
+    let result = engine.process_key(&press_key(Keysym::RETURN));
+    let has_commit = result
+        .actions
+        .iter()
+        .any(|a| matches!(a, EngineAction::Commit(text) if text == "、"));
+    assert!(has_commit, "',' should prefer Japanese punctuation");
+
+    engine.process_key(&press('.'));
+    assert_eq!(engine.preedit().unwrap().text(), "。");
+
+    let result = engine.process_key(&press_key(Keysym::RETURN));
+    let has_commit = result
+        .actions
+        .iter()
+        .any(|a| matches!(a, EngineAction::Commit(text) if text == "。"));
+    assert!(has_commit, "'.' should prefer Japanese punctuation");
+}
+
+#[test]
+fn test_fullwidth_comma_and_period_apply_when_japanese_punctuation_disabled() {
+    let mut comma_engine = make_symbol_engine(false, true, false, false);
+    comma_engine.process_key(&press(','));
+    assert_eq!(comma_engine.preedit().unwrap().text(), "，");
+
+    let result = comma_engine.process_key(&press_key(Keysym::RETURN));
+    let has_commit = result
+        .actions
+        .iter()
+        .any(|a| matches!(a, EngineAction::Commit(text) if text == "，"));
+    assert!(has_commit, "',' should commit as full-width comma");
+
+    let mut period_engine = make_symbol_engine(false, false, true, false);
+    period_engine.process_key(&press('.'));
+    assert_eq!(period_engine.preedit().unwrap().text(), "．");
+
+    let result = period_engine.process_key(&press_key(Keysym::RETURN));
+    let has_commit = result
+        .actions
+        .iter()
+        .any(|a| matches!(a, EngineAction::Commit(text) if text == "．"));
+    assert!(has_commit, "'.' should commit as full-width period");
+}
+
+#[test]
+fn test_japanese_punctuation_can_be_disabled_for_slash_and_brackets() {
+    let mut engine = make_symbol_engine(false, false, false, false);
+
+    engine.process_key(&press('/'));
+    assert_eq!(engine.preedit().unwrap().text(), "/");
+
+    let result = engine.process_key(&press_key(Keysym::RETURN));
+    let has_commit = result
+        .actions
+        .iter()
+        .any(|a| matches!(a, EngineAction::Commit(text) if text == "/"));
+    assert!(
+        has_commit,
+        "'/' should stay ASCII when Japanese punctuation is disabled"
+    );
+
+    engine.process_key(&press('['));
+    assert_eq!(engine.preedit().unwrap().text(), "[");
+
+    let result = engine.process_key(&press_key(Keysym::RETURN));
+    let has_commit = result
+        .actions
+        .iter()
+        .any(|a| matches!(a, EngineAction::Commit(text) if text == "["));
+    assert!(
+        has_commit,
+        "'[' should stay ASCII when Japanese punctuation is disabled"
+    );
+}

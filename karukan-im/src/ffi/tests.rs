@@ -21,7 +21,7 @@ struct TestEngine(*mut KarukanEngine);
 
 impl TestEngine {
     fn new() -> Self {
-        let ptr = karukan_engine_new();
+        let ptr = Box::into_raw(Box::new(KarukanEngine::new_for_test()));
         assert!(!ptr.is_null());
         Self(ptr)
     }
