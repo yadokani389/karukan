@@ -15,6 +15,7 @@ impl Keysym {
     // Common key symbols (XKB keysym values)
     pub const BACKSPACE: Keysym = Keysym(0xff08);
     pub const TAB: Keysym = Keysym(0xff09);
+    pub const ISO_LEFT_TAB: Keysym = Keysym(xkb::keysyms::KEY_ISO_Left_Tab);
     pub const RETURN: Keysym = Keysym(0xff0d);
     pub const ESCAPE: Keysym = Keysym(0xff1b);
     pub const DELETE: Keysym = Keysym(0xffff);

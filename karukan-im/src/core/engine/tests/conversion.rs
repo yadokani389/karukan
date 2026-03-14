@@ -281,6 +281,36 @@ fn test_tab_then_enter_commits_without_delayed_segmentation() {
 }
 
 #[test]
+fn test_shift_tab_moves_to_previous_candidate() {
+    let mut engine = InputMethodEngine::new();
+
+    engine.process_key(&press('a'));
+    engine.process_key(&press_key(Keysym::SPACE));
+    assert!(matches!(engine.state(), InputState::Conversion { .. }));
+
+    let result = engine.process_key(&press_shift_key(Keysym::TAB));
+    assert!(result.consumed);
+
+    let candidates = engine.state().candidates().unwrap();
+    assert_eq!(candidates.cursor(), candidates.len() - 1);
+}
+
+#[test]
+fn test_iso_left_tab_moves_to_previous_candidate() {
+    let mut engine = InputMethodEngine::new();
+
+    engine.process_key(&press('a'));
+    engine.process_key(&press_key(Keysym::SPACE));
+    assert!(matches!(engine.state(), InputState::Conversion { .. }));
+
+    let result = engine.process_key(&press_key(Keysym::ISO_LEFT_TAB));
+    assert!(result.consumed);
+
+    let candidates = engine.state().candidates().unwrap();
+    assert_eq!(candidates.cursor(), candidates.len() - 1);
+}
+
+#[test]
 fn test_enter_commits_on_last_segment() {
     let mut engine = InputMethodEngine::new();
 

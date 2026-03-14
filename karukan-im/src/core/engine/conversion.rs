@@ -652,11 +652,15 @@ impl InputMethodEngine {
             return self.expand_active_segment();
         }
 
+        if key.modifiers.shift_key && key.keysym == Keysym::TAB {
+            return self.prev_candidate();
+        }
+
         match key.keysym {
             Keysym::RETURN => self.confirm_or_next_segment(),
             Keysym::ESCAPE => self.cancel_conversion(),
             Keysym::SPACE | Keysym::DOWN | Keysym::TAB => self.next_candidate(),
-            Keysym::UP => self.prev_candidate(),
+            Keysym::ISO_LEFT_TAB | Keysym::UP => self.prev_candidate(),
             Keysym::PAGE_DOWN => self.next_candidate_page(),
             Keysym::PAGE_UP => self.prev_candidate_page(),
             Keysym::LEFT => self.prev_segment(),
