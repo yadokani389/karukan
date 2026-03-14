@@ -1,6 +1,7 @@
 use super::*;
 
 use crate::core::candidate::CandidateList;
+use crate::core::state::{ConversionSegment, ConversionSession};
 
 #[test]
 fn test_f7_converts_composing_to_fullwidth_katakana() {
@@ -95,13 +96,25 @@ fn test_f10_from_conversion_uses_raw_sequence() {
     engine.input_buf.text = "し".to_string();
     engine.input_buf.cursor_pos = 0;
     engine.raw_units = vec!["si".to_string()];
+    let candidates = CandidateList::from_strings_with_reading(["し", "シ"], "し");
     engine.state = InputState::Conversion {
         preedit: Preedit::with_text("し"),
-        candidates: CandidateList::from_strings_with_reading(["し", "シ"], "し"),
+        candidates: candidates.clone(),
+        session: ConversionSession {
+            reading: "し".to_string(),
+            segments: vec![ConversionSegment {
+                reading_start: 0,
+                reading_end: 1,
+                candidates,
+            }],
+            active_segment: 0,
+            segmentation_applied: true,
+            enter_segments: false,
+        },
     };
 
     let result = engine.process_key(&press_key(Keysym::F10));
     assert!(result.consumed);
-    assert!(matches!(engine.state(), InputState::Composing { .. }));
+    assert!(matches!(engine.state(), InputState::Conversion { .. }));
     assert_eq!(engine.preedit().unwrap().text(), "si");
 }

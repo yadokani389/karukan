@@ -1,6 +1,11 @@
 //! Key code definitions and key event handling
 
 use std::fmt;
+use std::str::FromStr;
+
+use serde::{Deserialize, Serialize};
+use xkbcommon::xkb;
+use xkbcommon::xkb::keysyms::KEY_NoSymbol;
 
 /// Key symbol (keysym) values
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -150,11 +155,102 @@ impl Keysym {
 
 impl fmt::Display for Keysym {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if let Some(ch) = self.to_char() {
+        let name = xkb::keysym_get_name(xkb::Keysym::new(self.0));
+        if !name.is_empty() {
+            write!(f, "{}", name)
+        } else if let Some(ch) = self.to_char() {
             write!(f, "{}", ch)
         } else {
             write!(f, "Keysym(0x{:04x})", self.0)
         }
+    }
+}
+
+impl FromStr for Keysym {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let keysym = xkb::keysym_from_name(value, xkb::KEYSYM_NO_FLAGS);
+        if keysym.raw() == KEY_NoSymbol {
+            Err(format!("invalid XKB keysym '{value}'"))
+        } else {
+            Ok(Self(keysym.raw()))
+        }
+    }
+}
+
+impl Serialize for Keysym {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+impl<'de> Deserialize<'de> for Keysym {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Self::from_str(&value).map_err(serde::de::Error::custom)
+    }
+}
+
+/// Configurable shortcut used by settings-driven key bindings.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KeyBinding {
+    pub keysym: Keysym,
+    #[serde(default)]
+    pub shift: bool,
+    #[serde(default)]
+    pub control: bool,
+    #[serde(default)]
+    pub alt: bool,
+    #[serde(default)]
+    pub super_key: bool,
+}
+
+impl KeyBinding {
+    pub fn matches(&self, key: &KeyEvent) -> bool {
+        key.keysym == self.keysym
+            && key.modifiers.shift_key == self.shift
+            && key.modifiers.control_key == self.control
+            && key.modifiers.alt_key == self.alt
+            && key.modifiers.super_key == self.super_key
+    }
+}
+
+impl Default for KeyBinding {
+    fn default() -> Self {
+        Self {
+            keysym: Keysym::LEFT,
+            shift: false,
+            control: false,
+            alt: false,
+            super_key: false,
+        }
+    }
+}
+
+impl fmt::Display for KeyBinding {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut parts = Vec::new();
+        if self.control {
+            parts.push("Ctrl".to_string());
+        }
+        if self.alt {
+            parts.push("Alt".to_string());
+        }
+        if self.shift {
+            parts.push("Shift".to_string());
+        }
+        if self.super_key {
+            parts.push("Super".to_string());
+        }
+        parts.push(self.keysym.to_string());
+        write!(f, "{}", parts.join("+"))
     }
 }
 
@@ -285,5 +381,26 @@ mod tests {
 
         let ctrl_a = KeyEvent::new(Keysym(0x0061), KeyModifiers::new().with_control(true), true);
         assert!(!ctrl_a.is_printable_press());
+    }
+
+    #[test]
+    fn test_key_binding_parse_and_display() {
+        let binding = KeyBinding {
+            keysym: Keysym::from_str("Left").unwrap(),
+            shift: true,
+            control: true,
+            alt: false,
+            super_key: false,
+        };
+        assert!(binding.control);
+        assert!(binding.shift);
+        assert_eq!(binding.keysym, Keysym::LEFT);
+        assert_eq!(binding.to_string(), "Ctrl+Shift+Left");
+    }
+
+    #[test]
+    fn test_keysym_from_xkb_name() {
+        assert_eq!(Keysym::from_str("Left").unwrap(), Keysym::LEFT);
+        assert!(Keysym::from_str("NotARealKeysym").is_err());
     }
 }

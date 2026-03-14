@@ -31,6 +31,12 @@ directories = "5"
 # Error handling
 anyhow.workspace = true
 
+# Bunsetsu segmentation
+lindera = { version = "2.3", features = ["embed-ipadic"] }
+
+# XKB keysym parsing
+xkbcommon = "0.9"
+
 [dev-dependencies]
 tokio-test = "0.4"
 tempfile.workspace = true

@@ -5,6 +5,49 @@
 use super::candidate::CandidateList;
 use super::preedit::Preedit;
 
+/// Conversion state for one segment.
+#[derive(Debug, Clone)]
+pub struct ConversionSegment {
+    /// Start position in the original reading (character index).
+    pub reading_start: usize,
+    /// End position in the original reading (character index, exclusive).
+    pub reading_end: usize,
+    /// Candidates for this segment.
+    pub candidates: CandidateList,
+}
+
+impl ConversionSegment {
+    /// Get the current surface text for this segment.
+    pub fn selected_text(&self) -> &str {
+        self.candidates.selected_text().unwrap_or("")
+    }
+}
+
+/// Conversion session containing all bunsetsu segments.
+#[derive(Debug, Clone)]
+pub struct ConversionSession {
+    /// Original reading for the whole conversion.
+    pub reading: String,
+    /// Segments in reading order.
+    pub segments: Vec<ConversionSegment>,
+    /// Active segment index.
+    pub active_segment: usize,
+    /// Whether bunsetsu segmentation has already been applied.
+    pub segmentation_applied: bool,
+    /// Whether Enter can still trigger delayed bunsetsu navigation.
+    pub enter_segments: bool,
+}
+
+impl ConversionSession {
+    /// Get the selected surface for the whole conversion.
+    pub fn composed_text(&self) -> String {
+        self.segments
+            .iter()
+            .map(ConversionSegment::selected_text)
+            .collect()
+    }
+}
+
 /// The current state of the IME
 #[derive(Debug, Clone, Default)]
 pub enum InputState {
@@ -24,8 +67,10 @@ pub enum InputState {
     Conversion {
         /// The preedit string showing conversion result
         preedit: Preedit,
-        /// List of conversion candidates
+        /// List of conversion candidates for the active segment
         candidates: CandidateList,
+        /// Bunsetsu conversion session
+        session: ConversionSession,
     },
 }
 
@@ -65,6 +110,22 @@ impl InputState {
     pub fn candidates_mut(&mut self) -> Option<&mut CandidateList> {
         match self {
             Self::Conversion { candidates, .. } => Some(candidates),
+            _ => None,
+        }
+    }
+
+    /// Get conversion session in conversion state.
+    pub fn conversion_session(&self) -> Option<&ConversionSession> {
+        match self {
+            Self::Conversion { session, .. } => Some(session),
+            _ => None,
+        }
+    }
+
+    /// Get mutable conversion session in conversion state.
+    pub fn conversion_session_mut(&mut self) -> Option<&mut ConversionSession> {
+        match self {
+            Self::Conversion { session, .. } => Some(session),
             _ => None,
         }
     }

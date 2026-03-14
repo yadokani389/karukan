@@ -29,7 +29,10 @@ impl InputMethodEngine {
         }
     }
 
-    fn direct_mode_for_function_key(&self, keysym: Keysym) -> Option<DirectConversionMode> {
+    pub(super) fn direct_mode_for_function_key(
+        &self,
+        keysym: Keysym,
+    ) -> Option<DirectConversionMode> {
         match keysym {
             Keysym::F6 => Some(DirectConversionMode::Hiragana),
             Keysym::F7 => Some(DirectConversionMode::KatakanaFullwidth),

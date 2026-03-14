@@ -12,8 +12,13 @@ use super::{KarukanEngine, ffi_mut, init_logging};
 #[unsafe(no_mangle)]
 pub extern "C" fn karukan_engine_new() -> *mut KarukanEngine {
     init_logging();
-    let engine = Box::new(KarukanEngine::new());
-    Box::into_raw(engine)
+    match KarukanEngine::new() {
+        Ok(engine) => Box::into_raw(Box::new(engine)),
+        Err(e) => {
+            tracing::error!("Failed to load karukan settings: {e}");
+            std::ptr::null_mut()
+        }
+    }
 }
 
 /// Initialize the kanji converter (loads the model)

@@ -71,7 +71,7 @@ impl InputMethodEngine {
         }
     }
 
-    fn convert_direct_raw_text(&self, text: &str, mode: DirectConversionMode) -> String {
+    pub(super) fn convert_direct_raw_text(&self, text: &str, mode: DirectConversionMode) -> String {
         match mode {
             DirectConversionMode::AlphabetFullwidth(case) => {
                 karukan_engine::kana::ascii_to_fullwidth(&Self::apply_direct_alphabet_case(
@@ -262,6 +262,8 @@ impl InputMethodEngine {
         &self,
         reading: &str,
         candidates: Option<&CandidateList>,
+        active_segment: usize,
+        total_segments: usize,
     ) -> String {
         let ctx = self.display_context();
         let timing = format!(
@@ -283,15 +285,20 @@ impl InputMethodEngine {
             .filter(|a| !a.is_empty())
             .map(|a| format!(" | {}", a))
             .unwrap_or_default();
+        let segment_info = if total_segments > 1 {
+            format!(" [{}/{}]", active_segment + 1, total_segments)
+        } else {
+            String::new()
+        };
         if ctx.is_empty() {
             format!(
-                "[変換]{} {} | {} {} | {}{}",
-                page_info, reading, timing, tokens, model, source_label
+                "[変換]{}{} {} | {} {} | {}{}",
+                segment_info, page_info, reading, timing, tokens, model, source_label
             )
         } else {
             format!(
-                "[変換]{} {} | {} | {} {} | {}{}",
-                page_info, reading, ctx, timing, tokens, model, source_label
+                "[変換]{}{} {} | {} | {} {} | {}{}",
+                segment_info, page_info, reading, ctx, timing, tokens, model, source_label
             )
         }
     }

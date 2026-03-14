@@ -6,6 +6,8 @@
 use std::ffi::CString;
 use std::sync::Once;
 
+use anyhow::Result;
+
 mod input;
 mod lifecycle;
 mod query;
@@ -46,6 +48,7 @@ pub(crate) use ffi_ref;
 
 use crate::config::Settings;
 use crate::core::engine::{EngineAction, EngineConfig, InputMethodEngine};
+use crate::core::preedit::{AttributeType, PreeditAttribute};
 
 static INIT_LOGGING: Once = Once::new();
 
@@ -63,9 +66,18 @@ fn init_logging() {
 
 /// Cached preedit text and caret position for FFI consumption.
 #[derive(Default)]
+struct PreeditAttributeCache {
+    start_bytes: u32,
+    end_bytes: u32,
+    attr_type: u32,
+}
+
+/// Cached preedit text and caret position for FFI consumption.
+#[derive(Default)]
 struct PreeditCache {
     text: CString,
     caret_bytes: u32,
+    attributes: Vec<PreeditAttributeCache>,
     dirty: bool,
 }
 
@@ -109,10 +121,39 @@ pub struct KarukanEngine {
 }
 
 impl KarukanEngine {
-    fn new() -> Self {
-        // Load user settings from config.toml, fall back to defaults
-        let settings = Settings::load().unwrap_or_default();
-        Self::from_settings(settings)
+    fn attribute_type_code(attr_type: AttributeType) -> u32 {
+        match attr_type {
+            AttributeType::Underline => 1,
+            AttributeType::UnderlineDouble => 2,
+            AttributeType::Highlight => 3,
+            AttributeType::Reverse => 4,
+        }
+    }
+
+    fn char_to_byte_offset(text: &str, char_offset: usize) -> usize {
+        text.char_indices()
+            .nth(char_offset)
+            .map(|(i, _)| i)
+            .unwrap_or(text.len())
+    }
+
+    fn cache_preedit_attributes(
+        text: &str,
+        attributes: &[PreeditAttribute],
+    ) -> Vec<PreeditAttributeCache> {
+        attributes
+            .iter()
+            .map(|attr| PreeditAttributeCache {
+                start_bytes: Self::char_to_byte_offset(text, attr.start) as u32,
+                end_bytes: Self::char_to_byte_offset(text, attr.end) as u32,
+                attr_type: Self::attribute_type_code(attr.attr_type),
+            })
+            .collect()
+    }
+
+    fn new() -> Result<Self> {
+        let settings = Settings::load()?;
+        Ok(Self::from_settings(settings))
     }
 
     fn from_settings(settings: Settings) -> Self {
@@ -133,6 +174,8 @@ impl KarukanEngine {
             beam_width: settings.conversion.beam_width,
             max_latency_ms: settings.conversion.max_latency_ms,
             strategy: settings.conversion.strategy,
+            segment_shrink_key: settings.keymap.segment.shrink.clone(),
+            segment_expand_key: settings.keymap.segment.expand.clone(),
         };
         let engine = InputMethodEngine::with_config(config);
         Self {
@@ -179,6 +222,8 @@ impl KarukanEngine {
                         .map(|(i, _)| i)
                         .unwrap_or(preedit.text().len());
                     self.preedit.caret_bytes = caret_bytes as u32;
+                    self.preedit.attributes =
+                        Self::cache_preedit_attributes(preedit.text(), preedit.attributes());
                     self.preedit.text = CString::new(preedit.text()).unwrap_or_default();
                     self.preedit.dirty = true;
                 }

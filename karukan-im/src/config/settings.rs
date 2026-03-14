@@ -11,6 +11,8 @@ use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 
+use crate::core::keycode::KeyBinding;
+
 /// Default configuration TOML embedded from config/default.toml
 const DEFAULT_CONFIG_TOML: &str = include_str!("../../config/default.toml");
 
@@ -19,6 +21,8 @@ const DEFAULT_CONFIG_TOML: &str = include_str!("../../config/default.toml");
 pub struct Settings {
     /// Conversion settings
     pub conversion: ConversionSettings,
+    /// Key binding settings
+    pub keymap: KeymapSettings,
     /// Learning cache settings
     pub learning: LearningSettings,
 }
@@ -77,6 +81,43 @@ pub struct ConversionSettings {
     pub n_threads: u32,
 }
 
+/// Configurable key bindings.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct KeymapSettings {
+    /// Segment resize shortcuts.
+    pub segment: SegmentKeymapSettings,
+}
+
+/// Key bindings for segment length adjustment.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SegmentKeymapSettings {
+    /// Shrink active segment by moving its right boundary left.
+    pub shrink: KeyBinding,
+    /// Expand active segment by moving its right boundary right.
+    pub expand: KeyBinding,
+}
+
+impl Default for SegmentKeymapSettings {
+    fn default() -> Self {
+        Self {
+            shrink: KeyBinding {
+                keysym: crate::core::keycode::Keysym::LEFT,
+                shift: true,
+                control: false,
+                alt: false,
+                super_key: false,
+            },
+            expand: KeyBinding {
+                keysym: crate::core::keycode::Keysym::RIGHT,
+                shift: true,
+                control: false,
+                alt: false,
+                super_key: false,
+            },
+        }
+    }
+}
+
 /// Learning cache settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LearningSettings {
@@ -94,8 +135,20 @@ impl Default for Settings {
 
 /// Recursively merge `overlay` TOML values on top of `base`.
 fn merge_toml(base: &mut toml::Value, overlay: &toml::Value) {
+    fn is_key_binding_table(table: &toml::map::Map<String, toml::Value>) -> bool {
+        table.contains_key("keysym")
+            || table.contains_key("shift")
+            || table.contains_key("control")
+            || table.contains_key("alt")
+            || table.contains_key("super_key")
+    }
+
     match (base, overlay) {
         (toml::Value::Table(base_table), toml::Value::Table(overlay_table)) => {
+            if is_key_binding_table(overlay_table) {
+                *base_table = overlay_table.clone();
+                return;
+            }
             for (key, value) in overlay_table {
                 if let Some(base_value) = base_table.get_mut(key) {
                     merge_toml(base_value, value);
@@ -225,6 +278,8 @@ mod tests {
         assert!(settings.conversion.japanese_punctuation);
         assert!(settings.conversion.use_context);
         assert_eq!(settings.conversion.max_context_length, 20);
+        assert_eq!(settings.keymap.segment.shrink.to_string(), "Shift+Left");
+        assert_eq!(settings.keymap.segment.expand.to_string(), "Shift+Right");
     }
 
     #[test]
@@ -252,6 +307,14 @@ fullwidth_comma = true
 fullwidth_period = true
 japanese_punctuation = false
 use_context = false
+
+[keymap.segment.shrink]
+keysym = "Left"
+control = true
+
+[keymap.segment.expand]
+keysym = "Right"
+control = true
 "#
         )
         .unwrap();
@@ -261,10 +324,52 @@ use_context = false
         assert!(settings.conversion.live_conversion);
         assert_eq!(settings.conversion.num_candidates, 5);
         assert!(settings.conversion.fullwidth_symbols);
+        assert_eq!(settings.keymap.segment.shrink.to_string(), "Ctrl+Left");
+        assert_eq!(settings.keymap.segment.expand.to_string(), "Ctrl+Right");
         assert!(settings.conversion.fullwidth_comma);
         assert!(settings.conversion.fullwidth_period);
         assert!(!settings.conversion.japanese_punctuation);
         assert!(!settings.conversion.use_context);
+    }
+
+    #[test]
+    fn test_key_binding_override_replaces_defaults() {
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            r#"
+[keymap.segment.shrink]
+keysym = "Henkan"
+control = true
+"#
+        )
+        .unwrap();
+
+        let path = file.path().to_path_buf();
+        let settings = Settings::load_from(&path).unwrap();
+        assert_eq!(
+            settings.keymap.segment.shrink.keysym,
+            "Henkan".parse().unwrap()
+        );
+        assert!(settings.keymap.segment.shrink.control);
+        assert!(!settings.keymap.segment.shrink.shift);
+        assert_eq!(settings.keymap.segment.expand.to_string(), "Shift+Right");
+    }
+
+    #[test]
+    fn test_invalid_keysym_is_error() {
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            r#"
+[keymap.segment.shrink]
+keysym = "DefinitelyNotAKeysym"
+"#
+        )
+        .unwrap();
+
+        let path = file.path().to_path_buf();
+        assert!(Settings::load_from(&path).is_err());
     }
 
     #[test]
