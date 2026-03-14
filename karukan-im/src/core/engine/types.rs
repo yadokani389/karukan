@@ -1,8 +1,10 @@
 //! Type definitions for the IME engine
 
 use karukan_engine::{Dictionary, KanaKanjiConverter, RomajiConverter};
+use lindera::tokenizer::Tokenizer;
 
 use crate::config::settings::StrategyMode;
+use crate::core::keycode::KeyBinding;
 
 use super::super::candidate::CandidateList;
 use super::super::preedit::Preedit;
@@ -91,6 +93,10 @@ pub struct EngineConfig {
     pub max_latency_ms: u64,
     /// Conversion strategy mode (adaptive, light, main)
     pub strategy: StrategyMode,
+    /// Key binding to shrink the active segment.
+    pub segment_shrink_key: KeyBinding,
+    /// Key binding to expand the active segment.
+    pub segment_expand_key: KeyBinding,
 }
 
 impl Default for EngineConfig {
@@ -108,6 +114,20 @@ impl Default for EngineConfig {
             beam_width: 3,
             max_latency_ms: 100,
             strategy: StrategyMode::default(),
+            segment_shrink_key: KeyBinding {
+                keysym: crate::core::keycode::Keysym::LEFT,
+                shift: true,
+                control: false,
+                alt: false,
+                super_key: false,
+            },
+            segment_expand_key: KeyBinding {
+                keysym: crate::core::keycode::Keysym::RIGHT,
+                shift: true,
+                control: false,
+                alt: false,
+                super_key: false,
+            },
         }
     }
 }
@@ -120,6 +140,8 @@ pub(in crate::core) struct Converters {
     pub kanji: Option<KanaKanjiConverter>,
     /// Light model for beam search
     pub light_kanji: Option<KanaKanjiConverter>,
+    /// Bunsetsu segmenter used for delayed automatic segmentation.
+    pub bunsetsu_tokenizer: Option<Tokenizer>,
 }
 
 /// Input mode for the IME engine

@@ -81,6 +81,13 @@ void karukan_engine_set_surrounding_text(
 
 /* --- Preedit (composition) text --- */
 
+enum {
+    KARUKAN_PREEDIT_ATTR_UNDERLINE = 1,
+    KARUKAN_PREEDIT_ATTR_UNDERLINE_DOUBLE = 2,
+    KARUKAN_PREEDIT_ATTR_HIGHLIGHT = 3,
+    KARUKAN_PREEDIT_ATTR_REVERSE = 4,
+};
+
 /*
  * Check if there's a preedit update pending.
  */
@@ -103,6 +110,26 @@ uint32_t karukan_engine_get_preedit_len(const KarukanEngine* engine);
  * This indicates where the cursor should be displayed within the preedit text.
  */
 uint32_t karukan_engine_get_preedit_caret(const KarukanEngine* engine);
+
+/*
+ * Get the number of preedit attributes.
+ */
+uint32_t karukan_engine_get_preedit_attr_count(const KarukanEngine* engine);
+
+/*
+ * Get the start byte offset of a preedit attribute.
+ */
+uint32_t karukan_engine_get_preedit_attr_start(const KarukanEngine* engine, uint32_t index);
+
+/*
+ * Get the end byte offset of a preedit attribute.
+ */
+uint32_t karukan_engine_get_preedit_attr_end(const KarukanEngine* engine, uint32_t index);
+
+/*
+ * Get the type of a preedit attribute.
+ */
+uint32_t karukan_engine_get_preedit_attr_type(const KarukanEngine* engine, uint32_t index);
 
 /* --- Commit text --- */
 

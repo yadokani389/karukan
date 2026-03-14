@@ -10,7 +10,60 @@
 #include <fcitx/inputpanel.h>
 #include <xkbcommon/xkbcommon-keysyms.h>
 
+#include <algorithm>
+#include <cstddef>
+#include <string>
+
 namespace fcitx {
+
+namespace {
+
+TextFormatFlag toTextFormatFlag(uint32_t attrType) {
+    switch (attrType) {
+        case KARUKAN_PREEDIT_ATTR_UNDERLINE:
+        case KARUKAN_PREEDIT_ATTR_UNDERLINE_DOUBLE:
+            return TextFormatFlag::Underline;
+        case KARUKAN_PREEDIT_ATTR_HIGHLIGHT:
+        case KARUKAN_PREEDIT_ATTR_REVERSE:
+            return TextFormatFlag::HighLight;
+        default:
+            return TextFormatFlag::NoFlag;
+    }
+}
+
+Text buildPreedit(::KarukanEngine* rustEngine, const char* preeditText, uint32_t preeditLen,
+                  uint32_t preeditCaret) {
+    Text preedit;
+    if (!preeditText || preeditLen == 0) {
+        return preedit;
+    }
+
+    std::string text(preeditText, preeditLen);
+    uint32_t attrCount = karukan_engine_get_preedit_attr_count(rustEngine);
+    size_t consumed = 0;
+
+    for (uint32_t i = 0; i < attrCount; ++i) {
+        size_t start = std::min<size_t>(karukan_engine_get_preedit_attr_start(rustEngine, i), text.size());
+        size_t end = std::min<size_t>(karukan_engine_get_preedit_attr_end(rustEngine, i), text.size());
+        if (start > consumed) {
+            preedit.append(text.substr(consumed, start - consumed), TextFormatFlag::NoFlag);
+        }
+        if (end > start) {
+            preedit.append(text.substr(start, end - start),
+                           toTextFormatFlag(karukan_engine_get_preedit_attr_type(rustEngine, i)));
+        }
+        consumed = std::max(consumed, end);
+    }
+
+    if (consumed < text.size()) {
+        preedit.append(text.substr(consumed), TextFormatFlag::NoFlag);
+    }
+
+    preedit.setCursor(static_cast<int>(preeditCaret));
+    return preedit;
+}
+
+}  // namespace
 
 // X11 modifier bitmask constants matching the Rust FFI boundary (KeyModifiers::*_MASK).
 constexpr uint32_t kShiftMask = 1;    // ShiftMask
@@ -63,6 +116,22 @@ void KarukanCandidateList::updateCandidates(::KarukanEngine* rustEngine) {
     if (count > 0 && cursor < count) {
         setGlobalCursorIndex(static_cast<int>(cursor));
     }
+}
+
+void KarukanCandidateList::prev() {
+    engine_->processSyntheticKey(ic_, XKB_KEY_Left);
+}
+
+void KarukanCandidateList::next() {
+    engine_->processSyntheticKey(ic_, XKB_KEY_Right);
+}
+
+void KarukanCandidateList::prevCandidate() {
+    engine_->processSyntheticKey(ic_, XKB_KEY_Up);
+}
+
+void KarukanCandidateList::nextCandidate() {
+    engine_->processSyntheticKey(ic_, XKB_KEY_Down);
 }
 
 // --- KarukanState ---
@@ -194,11 +263,7 @@ void KarukanState::updateUI() {
         uint32_t preeditLen = karukan_engine_get_preedit_len(rustEngine_);
         uint32_t preeditCaret = karukan_engine_get_preedit_caret(rustEngine_);
 
-        Text preedit;
-        if (preeditText && preeditLen > 0) {
-            preedit.append(std::string(preeditText, preeditLen), TextFormatFlag::Underline);
-            preedit.setCursor(static_cast<int>(preeditCaret));
-        }
+        Text preedit = buildPreedit(rustEngine_, preeditText, preeditLen, preeditCaret);
 
         if (ic_->capabilityFlags().test(CapabilityFlag::Preedit)) {
             inputPanel.setClientPreedit(preedit);
@@ -328,6 +393,18 @@ void KarukanEngine::selectCandidate(InputContext* ic, int index) {
     karukan_engine_process_key(rustEngine, keysym, 0, 0);
 
     state->updateUI();
+}
+
+void KarukanEngine::processSyntheticKey(InputContext* ic, uint32_t keysym, uint32_t state) {
+    auto* stateProp = ic->propertyFor(&factory_);
+    auto* rustEngine = stateProp->rustEngine();
+
+    if (!rustEngine) {
+        return;
+    }
+
+    karukan_engine_process_key(rustEngine, keysym, state, 0);
+    stateProp->updateUI();
 }
 
 }  // namespace fcitx

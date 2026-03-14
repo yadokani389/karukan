@@ -37,6 +37,10 @@ class KarukanCandidateList : public CommonCandidateList {
 public:
     KarukanCandidateList(KarukanEngine* engine, InputContext* ic);
     void updateCandidates(::KarukanEngine* rustEngine);
+    void prev() override;
+    void next() override;
+    void prevCandidate() override;
+    void nextCandidate() override;
 
 private:
     KarukanEngine* engine_;
@@ -76,6 +80,7 @@ public:
     Instance* instance() { return instance_; }
 
     void selectCandidate(InputContext* ic, int index);
+    void processSyntheticKey(InputContext* ic, uint32_t keysym, uint32_t state = 0);
 
     auto& factory() { return factory_; }
 

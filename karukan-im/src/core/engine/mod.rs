@@ -10,6 +10,7 @@ mod init;
 mod input;
 mod input_buffer;
 mod mode;
+mod segmentation;
 mod strategy;
 mod types;
 
@@ -26,7 +27,7 @@ use tracing::{debug, trace};
 use super::candidate::{Candidate, CandidateList};
 use super::keycode::{KeyEvent, Keysym};
 use super::preedit::{AttributeType, Preedit, PreeditAttribute, PreeditSegment};
-use super::state::InputState;
+use super::state::{ConversionSegment, ConversionSession, InputState};
 use crate::config::settings::Settings;
 
 /// Source of a conversion candidate
@@ -122,6 +123,7 @@ impl InputMethodEngine {
                 romaji: RomajiConverter::new(),
                 kanji: None,
                 light_kanji: None,
+                bunsetsu_tokenizer: None,
             },
             surrounding_context: None,
             live: LiveConversion {
@@ -246,6 +248,12 @@ impl InputMethodEngine {
     fn raw_text_after_cursor(&self) -> String {
         let split = self.input_buf.cursor_pos.min(self.raw_units.len());
         self.raw_units[split..].concat()
+    }
+
+    fn raw_text_for_range(&self, start: usize, end: usize) -> String {
+        let start = start.min(self.raw_units.len());
+        let end = end.min(self.raw_units.len()).max(start);
+        self.raw_units[start..end].concat()
     }
 
     fn split_raw_chunks(raw: &str, output: &str) -> Vec<String> {
@@ -500,9 +508,9 @@ impl InputMethodEngine {
                 self.surrounding_context = None;
                 text
             }
-            InputState::Conversion { candidates, .. } => {
-                let text = candidates.selected_text().unwrap_or("").to_string();
-                let reading = candidates.selected().and_then(|c| c.reading.clone());
+            InputState::Conversion { session, .. } => {
+                let text = session.composed_text();
+                let reading = Some(session.reading.clone());
                 // Record conversion result in learning cache
                 if let Some(reading) = &reading {
                     self.record_learning(reading, &text);

@@ -88,6 +88,10 @@ impl TestEngine {
     fn has_candidates(&self) -> bool {
         karukan_engine_has_candidates(self.0) == 1
     }
+
+    fn preedit_attr_count(&self) -> u32 {
+        karukan_engine_get_preedit_attr_count(self.0)
+    }
 }
 
 impl Drop for TestEngine {
@@ -487,4 +491,19 @@ fn test_ffi_standalone_shift_does_not_toggle_mode() {
         "あ",
         "After standalone Shift, 'a' should still produce hiragana"
     );
+}
+
+#[test]
+fn test_ffi_preedit_attributes_exposed_for_segmented_conversion() {
+    let e = TestEngine::new();
+
+    e.press(0x6b); // k
+    e.press(XKB_KEY_A);
+    e.press(0x6e); // n
+    e.press(XKB_KEY_A);
+    e.press(0x20); // space
+    e.press_with(0xff51, SHIFT_MASK); // Shift+Left
+
+    assert_eq!(e.preedit(), "かな");
+    assert_eq!(e.preedit_attr_count(), 2);
 }

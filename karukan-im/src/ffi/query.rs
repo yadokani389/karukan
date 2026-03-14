@@ -34,6 +34,58 @@ pub extern "C" fn karukan_engine_get_preedit_caret(engine: *const KarukanEngine)
     engine.preedit.caret_bytes as c_uint
 }
 
+/// Get the number of preedit attributes.
+#[unsafe(no_mangle)]
+pub extern "C" fn karukan_engine_get_preedit_attr_count(engine: *const KarukanEngine) -> c_uint {
+    let engine = ffi_ref!(engine, 0);
+    engine.preedit.attributes.len() as c_uint
+}
+
+/// Get a preedit attribute start offset in bytes.
+#[unsafe(no_mangle)]
+pub extern "C" fn karukan_engine_get_preedit_attr_start(
+    engine: *const KarukanEngine,
+    index: c_uint,
+) -> c_uint {
+    let engine = ffi_ref!(engine, 0);
+    engine
+        .preedit
+        .attributes
+        .get(index as usize)
+        .map(|attr| attr.start_bytes)
+        .unwrap_or(0)
+}
+
+/// Get a preedit attribute end offset in bytes.
+#[unsafe(no_mangle)]
+pub extern "C" fn karukan_engine_get_preedit_attr_end(
+    engine: *const KarukanEngine,
+    index: c_uint,
+) -> c_uint {
+    let engine = ffi_ref!(engine, 0);
+    engine
+        .preedit
+        .attributes
+        .get(index as usize)
+        .map(|attr| attr.end_bytes)
+        .unwrap_or(0)
+}
+
+/// Get a preedit attribute type code.
+#[unsafe(no_mangle)]
+pub extern "C" fn karukan_engine_get_preedit_attr_type(
+    engine: *const KarukanEngine,
+    index: c_uint,
+) -> c_uint {
+    let engine = ffi_ref!(engine, 0);
+    engine
+        .preedit
+        .attributes
+        .get(index as usize)
+        .map(|attr| attr.attr_type)
+        .unwrap_or(0)
+}
+
 /// Check if there's a commit pending
 #[unsafe(no_mangle)]
 pub extern "C" fn karukan_engine_has_commit(engine: *const KarukanEngine) -> c_int {

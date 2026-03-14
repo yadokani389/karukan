@@ -25,6 +25,14 @@ fn press_key(keysym: Keysym) -> KeyEvent {
     KeyEvent::press(keysym)
 }
 
+fn press_shift_key(keysym: Keysym) -> KeyEvent {
+    KeyEvent::new(keysym, KeyModifiers::new().with_shift(true), true)
+}
+
+fn press_ctrl_key(keysym: Keysym) -> KeyEvent {
+    KeyEvent::new(keysym, KeyModifiers::new().with_control(true), true)
+}
+
 fn release_key(keysym: Keysym) -> KeyEvent {
     KeyEvent::new(keysym, KeyModifiers::default(), false)
 }
