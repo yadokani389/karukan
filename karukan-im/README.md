@@ -128,6 +128,7 @@ I2026-02-24 22:57:54.252982 addonmanager.cpp:195] Loaded addon karukan
 | キー                    | 動作                                   |
 | ----------------------- | -------------------------------------- |
 | Space / Tab / ↓         | 次の候補                               |
+| Shift+Tab               | 前の候補                               |
 | ↑                       | 前の候補                               |
 | ← / →                   | 初回押下で文節分割、その後は文節移動   |
 | Shift+← / Shift+→       | 文節の長さを調整（設定変更可）         |
@@ -169,6 +170,7 @@ japanese_punctuation = true     # 句読点を和文記号で入力する（, ->
 n_threads = 4                   # 推論スレッド数（0 = 全コア使用）
 model = "jinen-v1-small-q5"     # メインモデル（モデルID or GGUFパス）
 light_model = "jinen-v1-xsmall-q5"  # 軽量モデル（ビームサーチ・長文用）
+input_table_path = "/path/to/AZIK.tsv" # Hazkey互換TSV入力テーブル（未設定時は内蔵ローマ字規則）
 use_context = true              # Surrounding Textを変換に使用する
 max_context_length = 20         # コンテキストの最大文字数
 short_input_threshold = 10      # ビームサーチを使うトークン数の上限
@@ -196,6 +198,19 @@ max_entries = 10000            # 学習エントリの最大数
 - 文節分割には `Lindera + IPADIC` を使い、失敗した場合は 1 文節のままです。
 - 文節長調整キーは `[keymap.segment.*]` で変更できます。`keysym` には XKB keysym 名をそのまま指定します。
 - 特殊キーを使いたい場合も `keysym = "Henkan"` や `keysym = "Muhenkan"` のように指定できます。
+
+### Custom Input Table
+
+`input_table_path` を指定すると、内蔵のローマ字規則の代わりに Hazkey 互換の TSV 入力テーブルを使えます。
+
+- 形式は Hazkey の入力テーブル仕様と互換です。書式は [Hazkey: 入力テーブル](https://hazkey.hiira.dev/docs/settings/input-style-input-table) を参照してください。
+- Hazkey のサンプルもそのまま流用でき、[Hazkey: 入力スタイル設定のサンプル](https://hazkey.hiira.dev/docs/settings/input-style-samples) には `AZIK.tsv` があります。
+- `input_table_path` が空文字または未設定なら、従来どおり内蔵のローマ字規則を使います。
+
+```toml
+[conversion]
+input_table_path = "/home/user/.config/karukan-im/AZIK.tsv"
+```
 
 ### Symbol Input Style
 

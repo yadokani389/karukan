@@ -6,9 +6,19 @@
   [![CI (engine)](https://github.com/togatoga/karukan/actions/workflows/karukan-engine-ci.yml/badge.svg)](https://github.com/togatoga/karukan/actions/workflows/karukan-engine-ci.yml)
   [![CI (im)](https://github.com/togatoga/karukan/actions/workflows/karukan-im-ci.yml/badge.svg)](https://github.com/togatoga/karukan/actions/workflows/karukan-im-ci.yml)
   [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE-MIT)
-
-  <p>⚠️個人的に欲しかった機能を追加したフォークです</p>
 </div>
+
+⚠️個人的に欲しかった機能を追加したフォークです
+
+このフォークで追加した機能
+- カスタムテーブル対応(AZIK等、Hazkey互換のTSVを利用可能)
+- F6-F10 の直接変換
+- 起動時ライブ変換の有効/無効設定
+- 全角記号・句読点入力の設定
+- 遅延文節区切りによる文節編集
+- Shift+Tab で前候補へ移動
+
+詳細は [karukan-im の README](karukan-im/README.md) に書いてあります。
 
 <div align="center">
   <img src="images/demo.gif" width="800" alt="karukan demo" />
