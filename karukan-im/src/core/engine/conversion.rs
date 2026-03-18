@@ -9,7 +9,6 @@ use super::*;
 
 /// Maximum number of learning candidates to show
 const MAX_LEARNING_CANDIDATES: usize = 3;
-
 /// Helper for building a deduplicated list of conversion candidates.
 struct CandidateBuilder {
     candidates: Vec<AnnotatedCandidate>,
@@ -31,6 +30,7 @@ impl CandidateBuilder {
                 text,
                 source,
                 reading,
+                commit_kind: CandidateCommitKind::Whole,
             });
         }
     }
@@ -71,6 +71,7 @@ impl InputMethodEngine {
                 .map(|(i, ac)| {
                     let label = ac.source.label();
                     let cand_reading = ac.reading.unwrap_or_else(|| reading.to_string());
+                    let commit_kind = ac.commit_kind;
                     let mut c = if label.is_empty() {
                         Candidate::with_reading(&ac.text, &cand_reading)
                     } else {
@@ -79,8 +80,12 @@ impl InputMethodEngine {
                             reading: Some(cand_reading),
                             annotation: Some(label.to_string()),
                             index: 0,
+                            commit_kind: commit_kind.clone(),
                         }
                     };
+                    if label.is_empty() {
+                        c.commit_kind = commit_kind;
+                    }
                     c.index = i;
                     c
                 })
@@ -88,11 +93,65 @@ impl InputMethodEngine {
         )
     }
 
+    fn build_prefix_commit_candidates(
+        &mut self,
+        reading: &str,
+        existing: &[AnnotatedCandidate],
+        num_candidates: usize,
+    ) -> Vec<AnnotatedCandidate> {
+        let mut prefix_candidates = Vec::new();
+        let mut seen: HashSet<String> = existing
+            .iter()
+            .map(|candidate| candidate.text.clone())
+            .collect();
+        let mut seen_prefix_readings = HashSet::new();
+
+        for candidate in existing {
+            if candidate.source == CandidateSource::Fallback {
+                continue;
+            }
+
+            let Ok(bunsetsu) = self.segment_surface_to_bunsetsu(&candidate.text) else {
+                continue;
+            };
+            let Some(first) = bunsetsu.first().cloned() else {
+                continue;
+            };
+            if bunsetsu.len() <= 1
+                || first.reading == reading
+                || !seen_prefix_readings.insert(first.reading.clone())
+            {
+                continue;
+            }
+
+            let committed_reading_len = first.reading.chars().count();
+            for prefix_candidate in
+                self.build_exact_conversion_candidates(&first.reading, num_candidates)
+            {
+                if !seen.insert(prefix_candidate.text.clone()) {
+                    continue;
+                }
+
+                prefix_candidates.push(AnnotatedCandidate {
+                    text: prefix_candidate.text,
+                    source: prefix_candidate.source,
+                    reading: Some(first.reading.clone()),
+                    commit_kind: CandidateCommitKind::Prefix {
+                        committed_reading_len,
+                    },
+                });
+            }
+        }
+
+        prefix_candidates
+    }
+
     fn build_segment_candidates(
         &mut self,
         reading: &str,
         num_candidates: usize,
         preserved_text: Option<String>,
+        allow_prefix_commit: bool,
     ) -> CandidateList {
         let mut candidates = self.build_conversion_candidates(reading, num_candidates);
         if let Some(preserved_text) = preserved_text {
@@ -107,9 +166,17 @@ impl InputMethodEngine {
                         text: preserved_text,
                         source: CandidateSource::Model,
                         reading: None,
+                        commit_kind: CandidateCommitKind::Whole,
                     },
                 );
             }
+        }
+        if allow_prefix_commit {
+            candidates.extend(self.build_prefix_commit_candidates(
+                reading,
+                &candidates,
+                num_candidates,
+            ));
         }
         self.build_candidate_list_from_annotated(reading, candidates)
     }
@@ -123,6 +190,7 @@ impl InputMethodEngine {
                 &segment_reading,
                 self.config.num_candidates,
                 None,
+                false,
             ),
         }
     }
@@ -146,7 +214,7 @@ impl InputMethodEngine {
         }
     }
 
-    fn build_single_segment_session(
+    pub(super) fn build_single_segment_session(
         &mut self,
         reading: &str,
         preserved_text: Option<String>,
@@ -159,6 +227,7 @@ impl InputMethodEngine {
                 reading,
                 self.config.num_candidates,
                 preserved_text,
+                true,
             ),
         };
 
@@ -202,20 +271,59 @@ impl InputMethodEngine {
             .segments
             .iter()
             .enumerate()
-            .map(|(index, segment)| {
-                let text = segment.selected_text().to_string();
+            .flat_map(|(index, segment)| {
+                let segment_reading =
+                    Self::slice_chars(&session.reading, segment.reading_start, segment.reading_end);
+                let preedit_segments = Self::build_segment_preedit_segments(
+                    segment,
+                    &segment_reading,
+                    index == session.active_segment,
+                );
+                let text_len: usize = preedit_segments
+                    .iter()
+                    .map(|seg| seg.text.chars().count())
+                    .sum();
                 if index <= session.active_segment {
-                    caret += text.chars().count();
+                    caret += text_len;
                 }
-                let attr = if index == session.active_segment {
-                    AttributeType::Highlight
-                } else {
-                    AttributeType::Underline
-                };
-                PreeditSegment::new(text, attr)
+                preedit_segments
             })
             .collect();
         Preedit::from_segments(segments, caret)
+    }
+
+    fn build_segment_preedit_segments(
+        segment: &ConversionSegment,
+        segment_reading: &str,
+        is_active: bool,
+    ) -> Vec<PreeditSegment> {
+        let attr = if is_active {
+            AttributeType::Highlight
+        } else {
+            AttributeType::Underline
+        };
+        let Some(candidate) = segment.candidates.selected() else {
+            return vec![PreeditSegment::new(String::new(), attr)];
+        };
+
+        match candidate.commit_kind {
+            CandidateCommitKind::Whole => vec![PreeditSegment::new(candidate.text.clone(), attr)],
+            CandidateCommitKind::Prefix {
+                committed_reading_len,
+            } => {
+                let committed_len = committed_reading_len.min(segment_reading.chars().count());
+                let remaining = Self::slice_chars(
+                    segment_reading,
+                    committed_len,
+                    segment_reading.chars().count(),
+                );
+                let mut segments = vec![PreeditSegment::new(candidate.text.clone(), attr)];
+                if !remaining.is_empty() {
+                    segments.push(PreeditSegment::new(remaining, AttributeType::Underline));
+                }
+                segments
+            }
+        }
     }
 
     fn update_conversion_state(&mut self) -> EngineResult {
@@ -454,6 +562,7 @@ impl InputMethodEngine {
                         text: cand.surface.clone(),
                         source: CandidateSource::UserDictionary,
                         reading: None,
+                        commit_kind: CandidateCommitKind::Whole,
                     });
                 }
             }
@@ -474,6 +583,7 @@ impl InputMethodEngine {
                         text: cand.surface,
                         source: CandidateSource::Dictionary,
                         reading: None,
+                        commit_kind: CandidateCommitKind::Whole,
                     });
                 }
             }
@@ -503,6 +613,7 @@ impl InputMethodEngine {
                 text: reading.to_string(),
                 source: CandidateSource::Fallback,
                 reading: None,
+                commit_kind: CandidateCommitKind::Whole,
             }];
         }
 
@@ -523,6 +634,7 @@ impl InputMethodEngine {
                 source: CandidateSource::Learning,
                 // Exact matches have reading == input reading; use None to avoid redundancy
                 reading: c.reading.filter(|r| r != reading),
+                commit_kind: CandidateCommitKind::Whole,
             });
         }
 
@@ -560,6 +672,69 @@ impl InputMethodEngine {
         builder.into_candidates()
     }
 
+    fn build_exact_conversion_candidates(
+        &mut self,
+        reading: &str,
+        num_candidates: usize,
+    ) -> Vec<AnnotatedCandidate> {
+        if self.converters.kanji.is_none()
+            && let Err(e) = self.init_kanji_converter()
+        {
+            debug!("Failed to initialize kanji converter: {}", e);
+            return vec![AnnotatedCandidate {
+                text: reading.to_string(),
+                source: CandidateSource::Fallback,
+                reading: None,
+                commit_kind: CandidateCommitKind::Whole,
+            }];
+        }
+
+        let model_candidates = self.run_kana_kanji_conversion(reading, num_candidates);
+        let hiragana = reading.to_string();
+        let katakana = Self::hiragana_to_katakana(reading);
+        let mut builder = CandidateBuilder::new();
+
+        if let Some(cache) = &self.learning {
+            for (surface, _score) in cache.lookup(reading) {
+                builder.seen.insert(surface.clone());
+                builder.candidates.push(AnnotatedCandidate {
+                    text: surface,
+                    source: CandidateSource::Learning,
+                    reading: None,
+                    commit_kind: CandidateCommitKind::Whole,
+                });
+            }
+        }
+
+        let dict_results = self.search_dictionaries(reading, usize::MAX);
+        for ac in &dict_results {
+            if ac.source == CandidateSource::UserDictionary {
+                builder.push_annotated_if_new(ac.clone());
+            }
+        }
+
+        if model_candidates.is_empty() {
+            if builder.is_empty() {
+                builder.push_if_new(hiragana.clone(), CandidateSource::Fallback, None);
+            }
+        } else {
+            for text in model_candidates {
+                builder.push_if_new(text, CandidateSource::Model, None);
+            }
+        }
+
+        for ac in dict_results {
+            if ac.source == CandidateSource::Dictionary {
+                builder.push_annotated_if_new(ac);
+            }
+        }
+
+        builder.push_if_new(hiragana, CandidateSource::Fallback, None);
+        builder.push_if_new(katakana, CandidateSource::Fallback, None);
+
+        builder.into_candidates()
+    }
+
     /// Look up learning cache candidates for a reading (exact + prefix match, max 3).
     ///
     /// Returns candidates from the learning cache suitable for auto-suggest display.
@@ -582,6 +757,7 @@ impl InputMethodEngine {
                     reading: Some(reading.to_string()),
                     annotation: Some(label.clone()),
                     index: candidates.len(),
+                    commit_kind: CandidateCommitKind::Whole,
                 });
             }
         }
@@ -600,6 +776,7 @@ impl InputMethodEngine {
                     reading: Some(full_reading),
                     annotation: Some(label.clone()),
                     index: candidates.len(),
+                    commit_kind: CandidateCommitKind::Whole,
                 });
             }
         }
@@ -619,6 +796,7 @@ impl InputMethodEngine {
                 reading: Some(reading.to_string()),
                 annotation: Some(ac.source.label().to_string()),
                 index: i,
+                commit_kind: CandidateCommitKind::Whole,
             })
             .collect()
     }
@@ -698,11 +876,65 @@ impl InputMethodEngine {
     fn selected_conversion_info(&self) -> Option<(String, Option<String>)> {
         match &self.state {
             InputState::Conversion { session, .. } => {
-                let text = session.composed_text();
+                let text = Self::build_conversion_preedit(session).text().to_string();
                 Some((text, Some(session.reading.clone())))
             }
             _ => None,
         }
+    }
+
+    fn selected_commit_kind(&self) -> Option<CandidateCommitKind> {
+        self.state
+            .conversion_session()
+            .and_then(|session| session.segments.get(session.active_segment))
+            .and_then(|segment| segment.candidates.selected())
+            .map(|candidate| candidate.commit_kind.clone())
+    }
+
+    fn commit_prefix_candidate(&mut self, committed_reading_len: usize) -> EngineResult {
+        let Some(session) = self.state.conversion_session().cloned() else {
+            return EngineResult::not_consumed();
+        };
+        if session.segments.len() != 1 || session.active_segment != 0 {
+            let Some((text, reading)) = self.selected_conversion_info() else {
+                return EngineResult::not_consumed();
+            };
+            return self.finish_full_conversion(text, reading);
+        }
+
+        let Some(candidate) = session
+            .segments
+            .first()
+            .and_then(|segment| segment.candidates.selected())
+        else {
+            return EngineResult::not_consumed();
+        };
+
+        let reading_len = session.reading.chars().count();
+        let committed_len = committed_reading_len.min(reading_len);
+        let remaining_reading = Self::slice_chars(&session.reading, committed_len, reading_len);
+        if remaining_reading.is_empty() {
+            return self
+                .finish_full_conversion(candidate.text.clone(), Some(session.reading.clone()));
+        }
+
+        let committed_text = candidate.text.clone();
+        let committed_reading = Self::slice_chars(&session.reading, 0, committed_len);
+        self.record_learning(&committed_reading, &committed_text);
+
+        self.input_buf.text = remaining_reading.clone();
+        self.input_buf.cursor_pos = 0;
+        self.raw_units = self
+            .raw_units
+            .split_off(committed_len.min(self.raw_units.len()));
+        self.direct_mode = None;
+
+        let next_session = self.build_single_segment_session(&remaining_reading, None);
+        let mut result = EngineResult::consumed().with_action(EngineAction::Commit(committed_text));
+        result
+            .actions
+            .extend(self.enter_conversion_state(next_session).actions);
+        result
     }
 
     /// Record a conversion selection in the learning cache.
@@ -712,12 +944,7 @@ impl InputMethodEngine {
         }
     }
 
-    /// Commit the current conversion
-    fn commit_conversion(&mut self) -> EngineResult {
-        let Some((text, reading)) = self.selected_conversion_info() else {
-            return EngineResult::not_consumed();
-        };
-
+    fn finish_full_conversion(&mut self, text: String, reading: Option<String>) -> EngineResult {
         if text.is_empty() {
             return EngineResult::consumed();
         }
@@ -736,6 +963,21 @@ impl InputMethodEngine {
             .with_action(EngineAction::HideCandidates)
             .with_action(EngineAction::HideAuxText)
             .with_action(EngineAction::Commit(text))
+    }
+
+    /// Commit the current conversion
+    fn commit_conversion(&mut self) -> EngineResult {
+        if let Some(CandidateCommitKind::Prefix {
+            committed_reading_len,
+        }) = self.selected_commit_kind()
+        {
+            return self.commit_prefix_candidate(committed_reading_len);
+        }
+
+        let Some((text, reading)) = self.selected_conversion_info() else {
+            return EngineResult::not_consumed();
+        };
+        self.finish_full_conversion(text, reading)
     }
 
     fn confirm_or_next_segment(&mut self) -> EngineResult {
@@ -1078,6 +1320,7 @@ impl InputMethodEngine {
             reading: Some(reading),
             annotation: None,
             index: 0,
+            commit_kind: CandidateCommitKind::Whole,
         }]);
         candidates.reset();
         session.segments[active].candidates = candidates;

@@ -4,6 +4,18 @@
 
 /// A single conversion candidate
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CandidateCommitKind {
+    /// Selecting the candidate commits the full conversion result.
+    Whole,
+    /// Selecting the candidate commits only the first bunsetsu.
+    Prefix {
+        /// Number of reading characters consumed by the committed prefix.
+        committed_reading_len: usize,
+    },
+}
+
+/// A single conversion candidate
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Candidate {
     /// The converted text
     pub text: String,
@@ -13,6 +25,8 @@ pub struct Candidate {
     pub annotation: Option<String>,
     /// Unique index from the conversion engine
     pub index: usize,
+    /// How selecting this candidate should commit text.
+    pub commit_kind: CandidateCommitKind,
 }
 
 impl Candidate {
@@ -22,6 +36,7 @@ impl Candidate {
             reading: None,
             annotation: None,
             index: 0,
+            commit_kind: CandidateCommitKind::Whole,
         }
     }
 
@@ -31,7 +46,15 @@ impl Candidate {
             reading: Some(reading.into()),
             annotation: None,
             index: 0,
+            commit_kind: CandidateCommitKind::Whole,
         }
+    }
+
+    pub fn with_prefix_commit(mut self, committed_reading_len: usize) -> Self {
+        self.commit_kind = CandidateCommitKind::Prefix {
+            committed_reading_len,
+        };
+        self
     }
 
     pub fn with_index(mut self, index: usize) -> Self {

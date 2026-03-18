@@ -16,6 +16,11 @@ struct MorphToken {
     attach_to_next: bool,
 }
 
+#[derive(Debug, Clone)]
+pub(super) struct BunsetsuSpan {
+    pub reading: String,
+}
+
 impl MorphToken {
     fn from_token(token: &mut Token<'_>) -> Option<Self> {
         let surface = token.surface.to_string();
@@ -78,26 +83,38 @@ impl InputMethodEngine {
             .collect()
     }
 
-    fn group_tokens_into_bunsetsu(tokens: Vec<MorphToken>) -> Vec<String> {
+    fn group_tokens_into_bunsetsu(tokens: Vec<MorphToken>) -> Vec<BunsetsuSpan> {
         let mut bunsetsu = Vec::new();
-        let mut current = String::new();
+        let mut current_reading = String::new();
         let mut current_attaches_next = false;
 
         for token in tokens {
             let should_join =
-                !current.is_empty() && (token.attach_to_previous || current_attaches_next);
-            if !should_join && !current.is_empty() {
-                bunsetsu.push(std::mem::take(&mut current));
+                !current_reading.is_empty() && (token.attach_to_previous || current_attaches_next);
+            if !should_join && !current_reading.is_empty() {
+                bunsetsu.push(BunsetsuSpan {
+                    reading: std::mem::take(&mut current_reading),
+                });
             }
-            current.push_str(&token.reading);
+            current_reading.push_str(&token.reading);
             current_attaches_next = token.attach_to_next;
         }
 
-        if !current.is_empty() {
-            bunsetsu.push(current);
+        if !current_reading.is_empty() {
+            bunsetsu.push(BunsetsuSpan {
+                reading: current_reading,
+            });
         }
 
         bunsetsu
+    }
+
+    pub(super) fn segment_surface_to_bunsetsu(
+        &mut self,
+        surface: &str,
+    ) -> Result<Vec<BunsetsuSpan>> {
+        let tokens = self.lindera_tokens(surface)?;
+        Ok(Self::group_tokens_into_bunsetsu(tokens))
     }
 
     pub(super) fn segment_surface_to_ranges(
@@ -105,12 +122,12 @@ impl InputMethodEngine {
         surface: &str,
         reading: &str,
     ) -> Result<Vec<(usize, usize)>> {
-        let tokens = self.lindera_tokens(surface)?;
-        let bunsetsu = Self::group_tokens_into_bunsetsu(tokens);
+        let bunsetsu = self.segment_surface_to_bunsetsu(surface)?;
         let mut ranges = Vec::with_capacity(bunsetsu.len());
         let mut start = 0;
 
-        for segment_reading in bunsetsu {
+        for span in bunsetsu {
+            let segment_reading = span.reading;
             let len = segment_reading.chars().count();
             let end = start + len;
             if Self::slice_chars(reading, start, end) != segment_reading {

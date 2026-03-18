@@ -24,7 +24,7 @@ mod tests;
 use karukan_engine::{Dictionary, KanaKanjiConverter, LearningCache, RomajiConverter};
 use tracing::{debug, trace};
 
-use super::candidate::{Candidate, CandidateList};
+use super::candidate::{Candidate, CandidateCommitKind, CandidateList};
 use super::keycode::{KeyEvent, Keysym};
 use super::preedit::{AttributeType, Preedit, PreeditAttribute, PreeditSegment};
 use super::state::{ConversionSegment, ConversionSession, InputState};
@@ -64,6 +64,7 @@ struct AnnotatedCandidate {
     source: CandidateSource,
     /// Override reading (e.g. from prefix_lookup where the full reading differs from input)
     reading: Option<String>,
+    commit_kind: CandidateCommitKind,
 }
 
 /// Resolve a model variant id from settings.

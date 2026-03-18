@@ -1,5 +1,6 @@
 use super::*;
 use crate::core::keycode::KeyBinding;
+use karukan_engine::LearningCache;
 
 fn make_single_segment_conversion(reading: &str, surface: &str) -> InputMethodEngine {
     let mut engine = InputMethodEngine::new();
@@ -8,6 +9,33 @@ fn make_single_segment_conversion(reading: &str, surface: &str) -> InputMethodEn
     engine.input_buf.cursor_pos = reading.chars().count();
     engine.state = InputState::Conversion {
         preedit: Preedit::with_text(surface),
+        candidates: candidates.clone(),
+        session: ConversionSession {
+            reading: reading.to_string(),
+            segments: vec![ConversionSegment {
+                reading_start: 0,
+                reading_end: reading.chars().count(),
+                candidates,
+            }],
+            active_segment: 0,
+            segmentation_applied: false,
+            enter_segments: true,
+        },
+    };
+    engine
+}
+
+fn make_single_segment_conversion_with_candidates(
+    reading: &str,
+    candidates: Vec<Candidate>,
+) -> InputMethodEngine {
+    let mut engine = InputMethodEngine::new();
+    let candidates = CandidateList::new(candidates);
+    let preedit = Preedit::with_text(candidates.selected_text().unwrap_or(""));
+    engine.input_buf.text = reading.to_string();
+    engine.input_buf.cursor_pos = reading.chars().count();
+    engine.state = InputState::Conversion {
+        preedit,
         candidates: candidates.clone(),
         session: ConversionSession {
             reading: reading.to_string(),
@@ -390,4 +418,76 @@ fn test_custom_segment_resize_key_binding() {
     let session = engine.state().conversion_session().unwrap();
     assert_eq!(session.segments.len(), 2);
     assert!(session.segmentation_applied);
+}
+
+#[test]
+fn test_prefix_commit_candidate_keeps_remaining_reading_in_preedit() {
+    let mut engine = make_single_segment_conversion_with_candidates(
+        "きょうはいいてんきですね",
+        vec![
+            Candidate::with_reading("今日はいい天気ですね", "きょうはいいてんきですね"),
+            Candidate::with_reading("今日は", "きょうは")
+                .with_prefix_commit("きょうは".chars().count())
+                .with_index(1),
+        ],
+    );
+
+    let result = engine.process_key(&press_key(Keysym::DOWN));
+    assert!(result.consumed);
+    assert_eq!(engine.preedit().unwrap().text(), "今日はいいてんきですね");
+}
+
+#[test]
+fn test_enter_on_prefix_commit_candidate_commits_prefix_and_continues_conversion() {
+    let mut engine = make_single_segment_conversion_with_candidates(
+        "きょうはいいてんきですね",
+        vec![
+            Candidate::with_reading("今日はいい天気ですね", "きょうはいいてんきですね"),
+            Candidate::with_reading("今日は", "きょうは")
+                .with_prefix_commit("きょうは".chars().count())
+                .with_index(1),
+        ],
+    );
+
+    engine.process_key(&press_key(Keysym::DOWN));
+    let result = engine.process_key(&press_key(Keysym::RETURN));
+    assert!(result.consumed);
+    assert!(matches!(engine.state(), InputState::Conversion { .. }));
+    assert!(
+        result
+            .actions
+            .iter()
+            .any(|action| matches!(action, EngineAction::Commit(text) if text == "今日は"))
+    );
+
+    let session = engine.state().conversion_session().unwrap();
+    assert_eq!(session.reading, "いいてんきですね");
+    assert_eq!(session.segments.len(), 1);
+    assert_eq!(
+        engine.preedit().unwrap().text(),
+        session.segments[0].selected_text()
+    );
+}
+
+#[test]
+fn test_prefix_commit_candidates_reconvert_first_reading() {
+    let mut engine = InputMethodEngine::new();
+    let mut learning = LearningCache::new(16);
+    learning.record("きょうは", "今日は");
+    learning.record("きょうは", "教派");
+    engine.learning = Some(learning);
+
+    let session = engine.build_single_segment_session(
+        "きょうはいいてんきですね",
+        Some("今日はいい天気ですね".to_string()),
+    );
+    let texts: Vec<_> = session.segments[0]
+        .candidates
+        .candidates()
+        .iter()
+        .map(|candidate| candidate.text.clone())
+        .collect();
+
+    assert!(texts.iter().any(|text| text == "今日は"));
+    assert!(texts.iter().any(|text| text == "教派"));
 }
