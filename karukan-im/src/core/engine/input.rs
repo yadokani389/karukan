@@ -134,25 +134,25 @@ impl InputMethodEngine {
             return EngineResult::consumed().with_action(EngineAction::UpdatePreedit(preedit));
         }
 
-        let suggestions =
-            if self.input_mode != InputMode::Alphabet && !self.input_buf.text.is_empty() {
-                let reading = self.input_buf.text.clone();
-                let live_text = self.build_live_conversion_text(&reading);
-                let ranked_candidates = self.build_exact_conversion_ranked_candidates(
+        let suggestions = if self.input_mode != InputMode::Alphabet && !self.input_buf.text.is_empty()
+        {
+            let reading = self.input_buf.text.clone();
+            let live_text = self.build_live_conversion_text(&reading);
+            let has_non_fallback = self
+                .build_exact_conversion_ranked_candidates(
                     &reading,
                     self.config
                         .num_candidates
                         .max(CandidateList::DEFAULT_PAGE_SIZE),
-                );
-                let has_non_fallback = ranked_candidates
-                    .iter()
-                    .any(|candidate| candidate.source() != CandidateSource::Fallback);
-                Some((reading, live_text, ranked_candidates, has_non_fallback))
-            } else {
-                None
-            };
+                )
+                .iter()
+                .any(|candidate| candidate.source() != CandidateSource::Fallback);
+            Some((live_text, has_non_fallback))
+        } else {
+            None
+        };
 
-        let Some((reading, live_text, ranked_candidates, has_non_fallback)) = suggestions else {
+        let Some((live_text, has_non_fallback)) = suggestions else {
             self.live.text.clear();
             let preedit = self.set_composing_state();
             return EngineResult::consumed()
@@ -170,11 +170,8 @@ impl InputMethodEngine {
                 .with_action(EngineAction::UpdateAuxText(self.format_aux_composing()));
         }
 
-        let mut annotated_candidates = self.annotate_candidates(ranked_candidates.clone());
-        self.extend_live_candidates(&reading, live_text.as_deref(), &mut annotated_candidates);
-        let candidates = self.build_candidate_list_from_annotated(&reading, annotated_candidates);
-
-        // Live conversion mode: show converted text in preedit
+        // Live conversion mode: update the converted preedit, but keep the
+        // candidate window hidden until the user explicitly starts conversion.
         if self.live.enabled && self.input_mode != InputMode::Katakana {
             self.live.text = live_text
                 .map(|text| self.normalize_input_text(&text))
@@ -182,18 +179,19 @@ impl InputMethodEngine {
             let preedit = self.set_composing_state();
             let result = EngineResult::consumed()
                 .with_action(EngineAction::UpdatePreedit(preedit))
-                .with_action(EngineAction::ShowCandidates(candidates.clone()));
+                .with_action(EngineAction::HideCandidates);
             let aux = self.format_aux_suggest(&self.input_buf.text.clone());
             return result.with_action(EngineAction::UpdateAuxText(aux));
         }
 
-        // Normal auto-suggest: show hiragana preedit + reranked candidates
+        // Normal auto-suggest: keep candidate ranking warm, but do not show the
+        // candidate window until the user presses Space/Tab/Down.
         self.live.text.clear();
         let preedit = self.set_composing_state();
         let aux = self.format_aux_suggest(&self.input_buf.text.clone());
         EngineResult::consumed()
             .with_action(EngineAction::UpdatePreedit(preedit))
-            .with_action(EngineAction::ShowCandidates(candidates))
+            .with_action(EngineAction::HideCandidates)
             .with_action(EngineAction::UpdateAuxText(aux))
     }
 

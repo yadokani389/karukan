@@ -5,11 +5,16 @@ use karukan_engine::LearningCache;
 fn test_engine_basic_input() {
     let mut engine = InputMethodEngine::new();
 
-    // Type "a" -> "あ"
-    let result = engine.process_key(&press('a'));
+    engine.process_key(&press('a'));
+    let result = engine.process_key(&press('i'));
+
     assert!(result.consumed);
     assert!(matches!(engine.state(), InputState::Composing { .. }));
-    assert_eq!(engine.preedit().unwrap().text(), "あ");
+    assert_eq!(engine.preedit().unwrap().text(), "あい");
+    assert!(result
+        .actions
+        .iter()
+        .any(|action| matches!(action, EngineAction::HideCandidates)));
 }
 
 #[test]

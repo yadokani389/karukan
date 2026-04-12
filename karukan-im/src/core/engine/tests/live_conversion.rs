@@ -26,16 +26,33 @@ fn test_live_conversion_enabled() {
 
 #[test]
 fn test_live_conversion_off_unchanged() {
-    // With live_conversion=false, auto-suggest should show candidates (existing behavior)
+    // With live_conversion=false, composing keeps the candidate window hidden.
     let mut engine = InputMethodEngine::new();
     assert!(!engine.live.enabled);
 
     // Type "ai" -> "あい" (standard hiragana preedit)
     engine.process_key(&press('a'));
-    engine.process_key(&press('i'));
+    let result = engine.process_key(&press('i'));
     assert_eq!(engine.preedit().unwrap().text(), "あい");
-    // live_conversion_text should be empty
     assert!(engine.live.text.is_empty());
+    assert!(result
+        .actions
+        .iter()
+        .any(|action| matches!(action, EngineAction::HideCandidates)));
+}
+
+#[test]
+fn test_live_conversion_keeps_candidates_hidden_while_composing() {
+    let mut engine = make_live_conversion_engine();
+
+    engine.process_key(&press('a'));
+    let result = engine.process_key(&press('i'));
+
+    assert!(matches!(engine.state(), InputState::Composing { .. }));
+    assert!(result
+        .actions
+        .iter()
+        .any(|action| matches!(action, EngineAction::HideCandidates)));
 }
 
 #[test]

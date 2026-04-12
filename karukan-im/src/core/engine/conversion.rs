@@ -1022,21 +1022,6 @@ impl InputMethodEngine {
         Some(self.rerank_auto_suggest_text(reading, &preserved))
     }
 
-    pub(super) fn extend_live_candidates(
-        &mut self,
-        reading: &str,
-        live_text: Option<&str>,
-        candidates: &mut Vec<AnnotatedCandidate>,
-    ) {
-        let base_surface = live_text
-            .map(str::to_string)
-            .or_else(|| candidates.first().map(|candidate| candidate.text.clone()));
-        let Some(base_surface) = base_surface else {
-            return;
-        };
-        self.append_sentence_alternatives(reading, &base_surface, candidates);
-    }
-
     #[cfg(test)]
     pub(super) fn sentence_alternatives_for_test(
         &mut self,
