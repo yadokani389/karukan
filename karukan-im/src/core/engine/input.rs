@@ -4,16 +4,6 @@ use karukan_engine::ConversionEvent;
 
 use super::*;
 
-/// Append candidates to `target`, skipping duplicates and updating indices.
-fn append_candidates_dedup(target: &mut Vec<Candidate>, source: Vec<Candidate>) {
-    for mut c in source {
-        if !target.iter().any(|existing| existing.text == c.text) {
-            c.index = target.len();
-            target.push(c);
-        }
-    }
-}
-
 fn ascii_symbol_to_fullwidth(c: char) -> Option<char> {
     match c {
         '!'..='~' if c.is_ascii_punctuation() => std::char::from_u32(c as u32 + 0xfee0),
@@ -144,81 +134,66 @@ impl InputMethodEngine {
             return EngineResult::consumed().with_action(EngineAction::UpdatePreedit(preedit));
         }
 
-        // Run auto-suggest (skip in alphabet mode — no hiragana to convert)
-        let candidates =
+        let suggestions =
             if self.input_mode != InputMode::Alphabet && !self.input_buf.text.is_empty() {
                 let reading = self.input_buf.text.clone();
-                let result = self.run_auto_suggest(&reading, 1);
-                if !result.is_empty() && result[0] != self.input_buf.text {
-                    Some((result, reading))
-                } else {
-                    None
-                }
+                let live_text = self.build_live_conversion_text(&reading);
+                let ranked_candidates = self.build_exact_conversion_ranked_candidates(
+                    &reading,
+                    self.config
+                        .num_candidates
+                        .max(CandidateList::DEFAULT_PAGE_SIZE),
+                );
+                let has_non_fallback = ranked_candidates
+                    .iter()
+                    .any(|candidate| candidate.source() != CandidateSource::Fallback);
+                Some((reading, live_text, ranked_candidates, has_non_fallback))
             } else {
                 None
             };
 
-        let Some((candidates, reading)) = candidates else {
-            // No useful AI suggestion — still show learning + dictionary candidates
+        let Some((reading, live_text, ranked_candidates, has_non_fallback)) = suggestions else {
             self.live.text.clear();
             let preedit = self.set_composing_state();
-            let reading = self.input_buf.text.clone();
-            let mut all_candidates = self.lookup_learning_candidates(&reading);
-            append_candidates_dedup(&mut all_candidates, self.lookup_dict_candidates(&reading));
-            if all_candidates.is_empty() {
-                return EngineResult::consumed()
-                    .with_action(EngineAction::UpdatePreedit(preedit))
-                    .with_action(EngineAction::HideCandidates)
-                    .with_action(EngineAction::UpdateAuxText(self.format_aux_composing()));
-            }
             return EngineResult::consumed()
                 .with_action(EngineAction::UpdatePreedit(preedit))
-                .with_action(EngineAction::ShowCandidates(CandidateList::new(
-                    all_candidates,
-                )))
+                .with_action(EngineAction::HideCandidates)
                 .with_action(EngineAction::UpdateAuxText(self.format_aux_composing()));
         };
 
+        if !has_non_fallback {
+            self.live.text.clear();
+            let preedit = self.set_composing_state();
+            return EngineResult::consumed()
+                .with_action(EngineAction::UpdatePreedit(preedit))
+                .with_action(EngineAction::HideCandidates)
+                .with_action(EngineAction::UpdateAuxText(self.format_aux_composing()));
+        }
+
+        let mut annotated_candidates = self.annotate_candidates(ranked_candidates.clone());
+        self.extend_live_candidates(&reading, live_text.as_deref(), &mut annotated_candidates);
+        let candidates = self.build_candidate_list_from_annotated(&reading, annotated_candidates);
+
         // Live conversion mode: show converted text in preedit
         if self.live.enabled && self.input_mode != InputMode::Katakana {
-            self.live.text = self.normalize_input_text(&candidates[0]);
+            self.live.text = live_text
+                .map(|text| self.normalize_input_text(&text))
+                .unwrap_or_default();
             let preedit = self.set_composing_state();
-            let mut result =
-                EngineResult::consumed().with_action(EngineAction::UpdatePreedit(preedit));
-
-            // Learning candidates first, then dictionary candidates
-            let mut all_candidates = self.lookup_learning_candidates(&reading);
-            append_candidates_dedup(&mut all_candidates, self.lookup_dict_candidates(&reading));
-            if all_candidates.is_empty() {
-                result = result.with_action(EngineAction::HideCandidates);
-            } else {
-                result = result.with_action(EngineAction::ShowCandidates(CandidateList::new(
-                    all_candidates,
-                )));
-            }
+            let result = EngineResult::consumed()
+                .with_action(EngineAction::UpdatePreedit(preedit))
+                .with_action(EngineAction::ShowCandidates(candidates.clone()));
             let aux = self.format_aux_suggest(&self.input_buf.text.clone());
             return result.with_action(EngineAction::UpdateAuxText(aux));
         }
 
-        // Normal auto-suggest: show hiragana preedit + learning/model/dict candidates
+        // Normal auto-suggest: show hiragana preedit + reranked candidates
         self.live.text.clear();
         let preedit = self.set_composing_state();
-        // Learning candidates first (highest priority)
-        let mut all_candidates = self.lookup_learning_candidates(&reading);
-        // Then model inference candidates
-        let model_candidates: Vec<Candidate> = candidates
-            .into_iter()
-            .map(|s| Candidate::with_reading(s, &reading))
-            .collect();
-        append_candidates_dedup(&mut all_candidates, model_candidates);
-        // Then dictionary candidates
-        append_candidates_dedup(&mut all_candidates, self.lookup_dict_candidates(&reading));
         let aux = self.format_aux_suggest(&self.input_buf.text.clone());
         EngineResult::consumed()
             .with_action(EngineAction::UpdatePreedit(preedit))
-            .with_action(EngineAction::ShowCandidates(CandidateList::new(
-                all_candidates,
-            )))
+            .with_action(EngineAction::ShowCandidates(candidates))
             .with_action(EngineAction::UpdateAuxText(aux))
     }
 
@@ -519,9 +494,6 @@ impl InputMethodEngine {
             self.live.text.clear();
             return EngineResult::consumed().with_action(EngineAction::HideAuxText);
         }
-
-        // Record live conversion result in learning cache
-        self.record_learning(&reading, &text);
 
         self.converters.romaji.reset();
         self.input_buf.clear();

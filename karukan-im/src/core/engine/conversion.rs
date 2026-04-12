@@ -1,54 +1,183 @@
 //! Conversion state handling (candidates, segments, commit)
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
 use tracing::debug;
 
 use super::*;
 
-/// Maximum number of learning candidates to show
+/// Maximum number of learning candidates to show in tests.
+#[cfg(test)]
 const MAX_LEARNING_CANDIDATES: usize = 3;
-/// Helper for building a deduplicated list of conversion candidates.
-struct CandidateBuilder {
-    candidates: Vec<AnnotatedCandidate>,
-    seen: HashSet<String>,
+const USER_DICT_BASE_SCORE: f64 = 18.0;
+const USER_DICT_SCORE_SCALE: f64 = 4.0;
+const STRONG_LEARNING_SCORE_SCALE: f64 = 1.3;
+const WEAK_LEARNING_SCORE_SCALE: f64 = 0.35;
+const MODEL_TOP_SCORE: f64 = 12.0;
+const MODEL_RANK_DECAY: f64 = 2.0;
+const SYSTEM_DICT_SCORE_SCALE: f64 = 6.0;
+const HIRAGANA_FALLBACK_SCORE: f64 = -6.0;
+const KATAKANA_FALLBACK_SCORE: f64 = -7.0;
+const PRESERVED_AUTO_SUGGEST_BONUS: f64 = 2.0;
+const AUTO_SUGGEST_STRONG_OVERRIDE_BONUS: f64 = 4.0;
+const AUTO_SUGGEST_SWITCH_MARGIN: f64 = 3.0;
+const MAX_SENTENCE_ALTERNATIVES_PER_SPAN: usize = 3;
+const MAX_SENTENCE_ALTERNATIVES_TOTAL: usize = 6;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FallbackKind {
+    Hiragana,
+    Katakana,
 }
 
-impl CandidateBuilder {
-    fn new() -> Self {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LearningMode {
+    Strong,
+    Weak,
+    WeakImmediate,
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct AggregatedCandidate {
+    pub(super) text: String,
+    reading: Option<String>,
+    commit_kind: CandidateCommitKind,
+    best_model_rank: Option<usize>,
+    user_dict_score: Option<f32>,
+    system_dict_score: Option<f32>,
+    learning: Option<LearningMatch>,
+    fallback: Option<FallbackKind>,
+    preserved: bool,
+}
+
+impl AggregatedCandidate {
+    fn new(text: String, reading: Option<String>, commit_kind: CandidateCommitKind) -> Self {
         Self {
-            candidates: Vec::new(),
-            seen: HashSet::new(),
+            text,
+            reading,
+            commit_kind,
+            best_model_rank: None,
+            user_dict_score: None,
+            system_dict_score: None,
+            learning: None,
+            fallback: None,
+            preserved: false,
         }
     }
 
-    /// Push a candidate if its text hasn't been seen yet.
-    fn push_if_new(&mut self, text: String, source: CandidateSource, reading: Option<String>) {
-        if self.seen.insert(text.clone()) {
-            self.candidates.push(AnnotatedCandidate {
-                text,
-                source,
-                reading,
-                commit_kind: CandidateCommitKind::Whole,
-            });
+    pub(super) fn source(&self) -> CandidateSource {
+        if self.user_dict_score.is_some() {
+            CandidateSource::UserDictionary
+        } else if self
+            .learning
+            .as_ref()
+            .is_some_and(|entry| entry.strong_selections > 0 || entry.weak_accepts > 0)
+        {
+            CandidateSource::Learning
+        } else if self.best_model_rank.is_some() {
+            CandidateSource::Model
+        } else if self.system_dict_score.is_some() {
+            CandidateSource::Dictionary
+        } else {
+            CandidateSource::Fallback
         }
     }
 
-    /// Push a pre-built `AnnotatedCandidate` if its text hasn't been seen yet.
-    fn push_annotated_if_new(&mut self, ac: AnnotatedCandidate) {
-        if self.seen.insert(ac.text.clone()) {
-            self.candidates.push(ac);
+    fn final_score(&self) -> f64 {
+        let learning_score = self.learning.as_ref().map_or(0.0, |entry| {
+            entry.strong_score * STRONG_LEARNING_SCORE_SCALE
+                + entry.weak_score * WEAK_LEARNING_SCORE_SCALE
+        });
+        let user_dict_score = self.user_dict_score.map_or(0.0, |score| {
+            USER_DICT_BASE_SCORE + normalized_dictionary_score(score, USER_DICT_SCORE_SCALE)
+        });
+        let system_dict_score = self.system_dict_score.map_or(0.0, |score| {
+            normalized_dictionary_score(score, SYSTEM_DICT_SCORE_SCALE)
+        });
+        let model_score = self.best_model_rank.map_or(0.0, |rank| {
+            (MODEL_TOP_SCORE - MODEL_RANK_DECAY * rank as f64).max(0.0)
+        });
+        let fallback_score = match self.fallback {
+            Some(FallbackKind::Hiragana) => HIRAGANA_FALLBACK_SCORE,
+            Some(FallbackKind::Katakana) => KATAKANA_FALLBACK_SCORE,
+            None => 0.0,
+        };
+
+        learning_score + user_dict_score + system_dict_score + model_score + fallback_score
+    }
+
+    fn partial_override_score(&self) -> f64 {
+        let mut score = self.final_score();
+        if self.preserved {
+            score += PRESERVED_AUTO_SUGGEST_BONUS;
+        }
+        if self.user_dict_score.is_some() || self.has_strong_learning_signal() {
+            score += AUTO_SUGGEST_STRONG_OVERRIDE_BONUS;
+        }
+        score
+    }
+
+    fn has_strong_learning_signal(&self) -> bool {
+        self.learning
+            .as_ref()
+            .is_some_and(|entry| entry.strong_selections > 0)
+    }
+
+    fn has_explicit_override_signal(&self) -> bool {
+        self.user_dict_score.is_some() || self.has_strong_learning_signal()
+    }
+
+    fn partial_override_source(&self) -> CandidateSource {
+        if self.user_dict_score.is_some() {
+            CandidateSource::UserDictionary
+        } else {
+            CandidateSource::Learning
         }
     }
 
-    fn is_empty(&self) -> bool {
-        self.candidates.is_empty()
+    fn into_annotated(self) -> AnnotatedCandidate {
+        let source = self.source();
+        AnnotatedCandidate {
+            text: self.text,
+            source,
+            reading: self.reading,
+            commit_kind: self.commit_kind,
+        }
     }
 
-    fn into_candidates(self) -> Vec<AnnotatedCandidate> {
-        self.candidates
+    #[cfg(test)]
+    fn from_source(text: impl Into<String>, source: CandidateSource) -> Self {
+        let text = text.into();
+        let mut candidate = Self::new(text.clone(), None, CandidateCommitKind::Whole);
+        match source {
+            CandidateSource::UserDictionary => candidate.user_dict_score = Some(0.0),
+            CandidateSource::Learning => {
+                candidate.learning = Some(LearningMatch {
+                    surface: text,
+                    score: 0.0,
+                    strong_score: 1.0_f64.ln_1p() * 3.0,
+                    weak_score: 0.0,
+                    strong_selections: 1,
+                    weak_accepts: 0,
+                });
+            }
+            CandidateSource::Model => candidate.best_model_rank = Some(0),
+            CandidateSource::Dictionary => candidate.system_dict_score = Some(0.0),
+            CandidateSource::Fallback => candidate.fallback = Some(FallbackKind::Hiragana),
+        }
+        candidate
     }
+
+    fn from_model_text(text: impl Into<String>) -> Self {
+        let mut candidate = Self::new(text.into(), None, CandidateCommitKind::Whole);
+        candidate.best_model_rank = Some(0);
+        candidate
+    }
+}
+
+fn normalized_dictionary_score(score: f32, scale: f64) -> f64 {
+    scale / (1.0 + score.max(0.0) as f64)
 }
 
 impl InputMethodEngine {
@@ -59,7 +188,7 @@ impl InputMethodEngine {
             .collect()
     }
 
-    fn build_candidate_list_from_annotated(
+    pub(super) fn build_candidate_list_from_annotated(
         &self,
         reading: &str,
         candidates: Vec<AnnotatedCandidate>,
@@ -91,6 +220,93 @@ impl InputMethodEngine {
                 })
                 .collect(),
         )
+    }
+
+    fn sentence_override_options(&self, reading: &str) -> Vec<(String, CandidateSource)> {
+        let mut options = Vec::new();
+        let mut seen = HashSet::new();
+
+        if let Some(dict) = &self.dicts.user
+            && let Some(result) = dict.exact_match_search(reading)
+        {
+            for candidate in result.candidates {
+                if seen.insert(candidate.surface.clone()) {
+                    options.push((candidate.surface.clone(), CandidateSource::UserDictionary));
+                }
+                if options.len() >= MAX_SENTENCE_ALTERNATIVES_PER_SPAN {
+                    return options;
+                }
+            }
+        }
+
+        if let Some(cache) = &self.learning {
+            for entry in cache.lookup_strong_matches(reading) {
+                if seen.insert(entry.surface.clone()) {
+                    options.push((entry.surface, CandidateSource::Learning));
+                }
+                if options.len() >= MAX_SENTENCE_ALTERNATIVES_PER_SPAN {
+                    break;
+                }
+            }
+        }
+
+        options
+    }
+
+    fn append_sentence_alternatives(
+        &mut self,
+        reading: &str,
+        base_surface: &str,
+        candidates: &mut Vec<AnnotatedCandidate>,
+    ) {
+        let Ok(spans) = self.segment_surface_to_learning_spans(base_surface, reading) else {
+            return;
+        };
+
+        let mut seen: HashSet<String> = candidates
+            .iter()
+            .map(|candidate| candidate.text.clone())
+            .collect();
+        let mut added = 0;
+
+        for span in spans {
+            if !span.learnable {
+                continue;
+            }
+
+            let prefix = Self::slice_chars(base_surface, 0, span.start);
+            let suffix = Self::slice_chars(base_surface, span.end, base_surface.chars().count());
+            for (replacement, source) in self.sentence_override_options(&span.reading) {
+                if replacement == span.surface {
+                    continue;
+                }
+
+                let text = format!("{}{}{}", prefix, replacement, suffix);
+                if !seen.insert(text.clone()) {
+                    continue;
+                }
+
+                candidates.push(AnnotatedCandidate {
+                    text,
+                    source,
+                    reading: None,
+                    commit_kind: CandidateCommitKind::Whole,
+                });
+                added += 1;
+                if added >= MAX_SENTENCE_ALTERNATIVES_TOTAL {
+                    return;
+                }
+            }
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn make_preserved_candidate(
+        &self,
+        text: &str,
+        source: CandidateSource,
+    ) -> AggregatedCandidate {
+        AggregatedCandidate::from_source(text, source)
     }
 
     fn build_prefix_commit_candidates(
@@ -153,23 +369,16 @@ impl InputMethodEngine {
         preserved_text: Option<String>,
         allow_prefix_commit: bool,
     ) -> CandidateList {
-        let mut candidates = self.build_conversion_candidates(reading, num_candidates);
-        if let Some(preserved_text) = preserved_text {
-            let seen: HashSet<&str> = candidates.iter().map(|c| c.text.as_str()).collect();
-            if !preserved_text.is_empty()
-                && preserved_text != reading
-                && !seen.contains(preserved_text.as_str())
-            {
-                candidates.insert(
-                    0,
-                    AnnotatedCandidate {
-                        text: preserved_text,
-                        source: CandidateSource::Model,
-                        reading: None,
-                        commit_kind: CandidateCommitKind::Whole,
-                    },
-                );
-            }
+        let ranked_candidates = self.ranked_candidates_with_preserved(
+            reading,
+            num_candidates,
+            preserved_text
+                .as_deref()
+                .filter(|text| !text.is_empty() && *text != reading),
+        );
+        let mut candidates = self.annotate_candidates(ranked_candidates);
+        if let Some(base_surface) = candidates.first().map(|candidate| candidate.text.clone()) {
+            self.append_sentence_alternatives(reading, &base_surface, &mut candidates);
         }
         if allow_prefix_commit {
             candidates.extend(self.build_prefix_commit_candidates(
@@ -192,6 +401,7 @@ impl InputMethodEngine {
                 None,
                 false,
             ),
+            explicit_candidate_selection: false,
         }
     }
 
@@ -229,6 +439,7 @@ impl InputMethodEngine {
                 preserved_text,
                 true,
             ),
+            explicit_candidate_selection: false,
         };
 
         ConversionSession {
@@ -455,27 +666,6 @@ impl InputMethodEngine {
         candidates
     }
 
-    /// Run inference for auto-suggest and return candidates (raw strings).
-    /// Initializes the kanji converter lazily. Falls back to the reading itself
-    /// if no candidates are produced.
-    pub(super) fn run_auto_suggest(&mut self, reading: &str, num_candidates: usize) -> Vec<String> {
-        // Ensure kanji converter is initialized
-        if self.converters.kanji.is_none()
-            && let Err(e) = self.init_kanji_converter()
-        {
-            debug!("Failed to initialize kanji converter: {}", e);
-            return vec![reading.to_string()];
-        }
-
-        let candidates = self.run_kana_kanji_conversion(reading, num_candidates);
-
-        if candidates.is_empty() {
-            vec![reading.to_string()]
-        } else {
-            candidates
-        }
-    }
-
     /// Start conversion using the current live-conversion result + dictionary candidates.
     ///
     /// Called when DOWN/TAB is pressed during live conversion.  Instead of
@@ -541,201 +731,330 @@ impl InputMethodEngine {
             ))
     }
 
-    /// Search user and system dictionaries for candidates matching a reading.
-    ///
-    /// User dictionary results come first (higher priority), then system dictionary
-    /// results sorted by score. Duplicates are removed via HashSet.
-    fn search_dictionaries(&self, reading: &str, limit: usize) -> Vec<AnnotatedCandidate> {
-        let mut candidates = Vec::new();
-        let mut seen = HashSet::new();
+    fn ranked_candidate_map(
+        &mut self,
+        reading: &str,
+        num_candidates: usize,
+    ) -> HashMap<String, AggregatedCandidate> {
+        let mut map = HashMap::new();
 
-        // User dictionary (higher priority)
+        if let Some(cache) = &self.learning {
+            for entry in cache.lookup_matches(reading) {
+                let key = entry.surface.clone();
+                map.entry(key.clone())
+                    .or_insert_with(|| {
+                        AggregatedCandidate::new(key, None, CandidateCommitKind::Whole)
+                    })
+                    .learning = Some(entry);
+            }
+        }
+
         if let Some(dict) = &self.dicts.user
             && let Some(result) = dict.exact_match_search(reading)
         {
-            for cand in result.candidates {
-                if candidates.len() >= limit {
-                    break;
-                }
-                if seen.insert(cand.surface.clone()) {
-                    candidates.push(AnnotatedCandidate {
-                        text: cand.surface.clone(),
-                        source: CandidateSource::UserDictionary,
-                        reading: None,
-                        commit_kind: CandidateCommitKind::Whole,
-                    });
-                }
+            for candidate in result.candidates {
+                let key = candidate.surface.clone();
+                let entry = map.entry(key.clone()).or_insert_with(|| {
+                    AggregatedCandidate::new(key, None, CandidateCommitKind::Whole)
+                });
+                entry.user_dict_score = Some(
+                    entry
+                        .user_dict_score
+                        .map_or(candidate.score, |score| score.min(candidate.score)),
+                );
             }
         }
 
-        // System dictionary (sorted by score)
+        let model_candidates = self.run_kana_kanji_conversion(reading, num_candidates);
+        for (rank, text) in model_candidates.into_iter().enumerate() {
+            let entry = map.entry(text.clone()).or_insert_with(|| {
+                AggregatedCandidate::new(text, None, CandidateCommitKind::Whole)
+            });
+            entry.best_model_rank = Some(entry.best_model_rank.map_or(rank, |best| best.min(rank)));
+        }
+
         if let Some(dict) = &self.dicts.system
             && let Some(result) = dict.exact_match_search(reading)
         {
-            let mut dict_candidates: Vec<_> = result.candidates.to_vec();
-            dict_candidates.sort_by(|a, b| a.score.total_cmp(&b.score));
-            for cand in dict_candidates {
-                if candidates.len() >= limit {
-                    break;
-                }
-                if seen.insert(cand.surface.clone()) {
-                    candidates.push(AnnotatedCandidate {
-                        text: cand.surface,
-                        source: CandidateSource::Dictionary,
-                        reading: None,
-                        commit_kind: CandidateCommitKind::Whole,
-                    });
-                }
+            for candidate in result.candidates {
+                let key = candidate.surface.clone();
+                let entry = map.entry(key.clone()).or_insert_with(|| {
+                    AggregatedCandidate::new(key, None, CandidateCommitKind::Whole)
+                });
+                entry.system_dict_score = Some(
+                    entry
+                        .system_dict_score
+                        .map_or(candidate.score, |score| score.min(candidate.score)),
+                );
             }
         }
 
+        let hiragana = reading.to_string();
+        map.entry(hiragana.clone())
+            .or_insert_with(|| AggregatedCandidate::new(hiragana, None, CandidateCommitKind::Whole))
+            .fallback = Some(FallbackKind::Hiragana);
+
+        let katakana = Self::hiragana_to_katakana(reading);
+        map.entry(katakana.clone())
+            .or_insert_with(|| AggregatedCandidate::new(katakana, None, CandidateCommitKind::Whole))
+            .fallback = Some(FallbackKind::Katakana);
+
+        map
+    }
+
+    fn ranked_candidates(
+        &mut self,
+        reading: &str,
+        num_candidates: usize,
+    ) -> Vec<AggregatedCandidate> {
+        self.ranked_candidates_with_preserved(reading, num_candidates, None)
+    }
+
+    fn ranked_candidates_with_preserved(
+        &mut self,
+        reading: &str,
+        num_candidates: usize,
+        preserved_text: Option<&str>,
+    ) -> Vec<AggregatedCandidate> {
+        let mut candidate_map = self.ranked_candidate_map(reading, num_candidates);
+        if let Some(preserved_text) = preserved_text {
+            let entry = candidate_map
+                .entry(preserved_text.to_string())
+                .or_insert_with(|| {
+                    AggregatedCandidate::new(
+                        preserved_text.to_string(),
+                        None,
+                        CandidateCommitKind::Whole,
+                    )
+                });
+            entry.best_model_rank = Some(entry.best_model_rank.map_or(0, |best| best.min(0)));
+        }
+
+        let mut ranked: Vec<_> = candidate_map.into_values().collect();
+        ranked.sort_by(|a, b| {
+            b.final_score()
+                .total_cmp(&a.final_score())
+                .then_with(|| a.text.cmp(&b.text))
+        });
+        ranked
+    }
+
+    pub(super) fn annotate_candidates(
+        &self,
+        candidates: Vec<AggregatedCandidate>,
+    ) -> Vec<AnnotatedCandidate> {
         candidates
+            .into_iter()
+            .map(AggregatedCandidate::into_annotated)
+            .collect()
+    }
+
+    fn partial_override_candidates(&self, reading: &str) -> Vec<AggregatedCandidate> {
+        let mut map = HashMap::new();
+
+        if let Some(cache) = &self.learning {
+            for entry in cache.lookup_strong_matches(reading) {
+                let key = entry.surface.clone();
+                map.entry(key.clone())
+                    .or_insert_with(|| {
+                        AggregatedCandidate::new(key, None, CandidateCommitKind::Whole)
+                    })
+                    .learning = Some(entry);
+            }
+        }
+
+        if let Some(dict) = &self.dicts.user
+            && let Some(result) = dict.exact_match_search(reading)
+        {
+            for candidate in result.candidates {
+                let key = candidate.surface.clone();
+                let entry = map.entry(key.clone()).or_insert_with(|| {
+                    AggregatedCandidate::new(key, None, CandidateCommitKind::Whole)
+                });
+                entry.user_dict_score = Some(
+                    entry
+                        .user_dict_score
+                        .map_or(candidate.score, |score| score.min(candidate.score)),
+                );
+            }
+        }
+
+        let mut ranked: Vec<_> = map.into_values().collect();
+        ranked.sort_by(|a, b| {
+            b.partial_override_score()
+                .total_cmp(&a.partial_override_score())
+                .then_with(|| a.text.cmp(&b.text))
+        });
+        ranked
     }
 
     /// Build conversion candidates for a reading from multiple sources.
     ///
-    /// Combines learning cache, dictionaries, and model inference results
-    /// with deduplication. Uses dynamic candidate count based on input token
-    /// count for performance.
-    ///
-    /// Priority: Learning → User Dictionary → Model → System Dictionary → Fallback
-    pub(super) fn build_conversion_candidates(
+    /// Combines learning cache, dictionaries, model inference, and fallback
+    /// into a single reranked candidate list.
+    pub(super) fn build_exact_conversion_ranked_candidates(
         &mut self,
         reading: &str,
         num_candidates: usize,
-    ) -> Vec<AnnotatedCandidate> {
-        // Ensure kanji converter is initialized
+    ) -> Vec<AggregatedCandidate> {
         if self.converters.kanji.is_none()
             && let Err(e) = self.init_kanji_converter()
         {
             debug!("Failed to initialize kanji converter: {}", e);
-            return vec![AnnotatedCandidate {
+            return vec![AggregatedCandidate {
                 text: reading.to_string(),
-                source: CandidateSource::Fallback,
                 reading: None,
                 commit_kind: CandidateCommitKind::Whole,
+                best_model_rank: None,
+                user_dict_score: None,
+                system_dict_score: None,
+                learning: None,
+                fallback: Some(FallbackKind::Hiragana),
+                preserved: false,
             }];
         }
 
-        let candidates = self.run_kana_kanji_conversion(reading, num_candidates);
-
-        let hiragana = reading.to_string();
-        let katakana = Self::hiragana_to_katakana(reading);
-
-        // Priority: Learning → User Dictionary → Model → System Dictionary → Fallback
-        let mut builder = CandidateBuilder::new();
-
-        // 1. Learning cache candidates (highest priority)
-        for c in self.lookup_learning_candidates(reading) {
-            // Force-insert learning candidates (always included even if duplicate text)
-            builder.seen.insert(c.text.clone());
-            builder.candidates.push(AnnotatedCandidate {
-                text: c.text,
-                source: CandidateSource::Learning,
-                // Exact matches have reading == input reading; use None to avoid redundancy
-                reading: c.reading.filter(|r| r != reading),
-                commit_kind: CandidateCommitKind::Whole,
-            });
-        }
-
-        // 2. Dictionary candidates (user dict first, then system dict)
-        let dict_results = self.search_dictionaries(reading, usize::MAX);
-        // Insert user dictionary entries at the top (after learning)
-        for ac in &dict_results {
-            if ac.source == CandidateSource::UserDictionary {
-                builder.push_annotated_if_new(ac.clone());
-            }
-        }
-
-        // 3. Model inference results
-        if candidates.is_empty() {
-            if builder.is_empty() {
-                builder.push_if_new(hiragana.clone(), CandidateSource::Fallback, None);
-            }
-        } else {
-            for text in candidates {
-                builder.push_if_new(text, CandidateSource::Model, None);
-            }
-        }
-
-        // 4. System dictionary candidates (from search_dictionaries result)
-        for ac in dict_results {
-            if ac.source == CandidateSource::Dictionary {
-                builder.push_annotated_if_new(ac);
-            }
-        }
-
-        // 5. Append hiragana/katakana fallback if not already present
-        builder.push_if_new(hiragana, CandidateSource::Fallback, None);
-        builder.push_if_new(katakana, CandidateSource::Fallback, None);
-
-        builder.into_candidates()
+        self.ranked_candidates(reading, num_candidates)
     }
 
-    fn build_exact_conversion_candidates(
+    pub(super) fn build_exact_conversion_candidates(
         &mut self,
         reading: &str,
         num_candidates: usize,
     ) -> Vec<AnnotatedCandidate> {
+        let candidates = self.build_exact_conversion_ranked_candidates(reading, num_candidates);
+        self.annotate_candidates(candidates)
+    }
+
+    fn select_partial_override_candidate(
+        &self,
+        reading: &str,
+        preserved: &AggregatedCandidate,
+    ) -> Option<AnnotatedCandidate> {
+        let mut preserved = preserved.clone();
+        preserved.preserved = true;
+        let preserved_score = preserved.partial_override_score();
+
+        let best = self
+            .partial_override_candidates(reading)
+            .into_iter()
+            .max_by(|a, b| {
+                a.partial_override_score()
+                    .total_cmp(&b.partial_override_score())
+                    .then_with(|| b.preserved.cmp(&a.preserved))
+                    .then_with(|| a.text.cmp(&b.text).reverse())
+            })?;
+
+        if best.text == preserved.text {
+            return None;
+        }
+
+        let best_score = best.partial_override_score();
+        let should_override = if best.has_explicit_override_signal() {
+            best_score > preserved_score
+        } else {
+            best_score >= preserved_score + AUTO_SUGGEST_SWITCH_MARGIN
+        };
+
+        let source = best.partial_override_source();
+        should_override.then_some(AnnotatedCandidate {
+            text: best.text,
+            source,
+            reading: None,
+            commit_kind: CandidateCommitKind::Whole,
+        })
+    }
+
+    pub(super) fn rerank_auto_suggest_text(
+        &mut self,
+        reading: &str,
+        preserved: &AggregatedCandidate,
+    ) -> String {
+        let Ok(spans) = self.segment_surface_to_learning_spans(&preserved.text, reading) else {
+            return preserved.text.clone();
+        };
+
+        let mut rebuilt = String::new();
+        for span in spans {
+            if !span.learnable {
+                rebuilt.push_str(&span.surface);
+                continue;
+            }
+
+            let text = self
+                .select_partial_override_candidate(
+                    &span.reading,
+                    &AggregatedCandidate::new(
+                        span.surface.clone(),
+                        None,
+                        CandidateCommitKind::Whole,
+                    ),
+                )
+                .map(|candidate| candidate.text)
+                .unwrap_or(span.surface);
+            rebuilt.push_str(&text);
+        }
+
+        if rebuilt.is_empty() {
+            preserved.text.clone()
+        } else {
+            rebuilt
+        }
+    }
+
+    pub(super) fn build_live_conversion_text(&mut self, reading: &str) -> Option<String> {
         if self.converters.kanji.is_none()
             && let Err(e) = self.init_kanji_converter()
         {
             debug!("Failed to initialize kanji converter: {}", e);
-            return vec![AnnotatedCandidate {
-                text: reading.to_string(),
-                source: CandidateSource::Fallback,
-                reading: None,
-                commit_kind: CandidateCommitKind::Whole,
-            }];
+            return None;
         }
 
-        let model_candidates = self.run_kana_kanji_conversion(reading, num_candidates);
-        let hiragana = reading.to_string();
-        let katakana = Self::hiragana_to_katakana(reading);
-        let mut builder = CandidateBuilder::new();
-
-        if let Some(cache) = &self.learning {
-            for (surface, _score) in cache.lookup(reading) {
-                builder.seen.insert(surface.clone());
-                builder.candidates.push(AnnotatedCandidate {
-                    text: surface,
-                    source: CandidateSource::Learning,
-                    reading: None,
-                    commit_kind: CandidateCommitKind::Whole,
-                });
-            }
+        let model_top_text = self
+            .run_kana_kanji_conversion(reading, 1)
+            .into_iter()
+            .next()?;
+        if model_top_text == reading {
+            return None;
         }
 
-        let dict_results = self.search_dictionaries(reading, usize::MAX);
-        for ac in &dict_results {
-            if ac.source == CandidateSource::UserDictionary {
-                builder.push_annotated_if_new(ac.clone());
-            }
-        }
-
-        if model_candidates.is_empty() {
-            if builder.is_empty() {
-                builder.push_if_new(hiragana.clone(), CandidateSource::Fallback, None);
-            }
-        } else {
-            for text in model_candidates {
-                builder.push_if_new(text, CandidateSource::Model, None);
-            }
-        }
-
-        for ac in dict_results {
-            if ac.source == CandidateSource::Dictionary {
-                builder.push_annotated_if_new(ac);
-            }
-        }
-
-        builder.push_if_new(hiragana, CandidateSource::Fallback, None);
-        builder.push_if_new(katakana, CandidateSource::Fallback, None);
-
-        builder.into_candidates()
+        let preserved = AggregatedCandidate::from_model_text(model_top_text.clone());
+        Some(self.rerank_auto_suggest_text(reading, &preserved))
     }
 
-    /// Look up learning cache candidates for a reading (exact + prefix match, max 3).
+    pub(super) fn extend_live_candidates(
+        &mut self,
+        reading: &str,
+        live_text: Option<&str>,
+        candidates: &mut Vec<AnnotatedCandidate>,
+    ) {
+        let base_surface = live_text
+            .map(str::to_string)
+            .or_else(|| candidates.first().map(|candidate| candidate.text.clone()));
+        let Some(base_surface) = base_surface else {
+            return;
+        };
+        self.append_sentence_alternatives(reading, &base_surface, candidates);
+    }
+
+    #[cfg(test)]
+    pub(super) fn sentence_alternatives_for_test(
+        &mut self,
+        reading: &str,
+        base_surface: &str,
+    ) -> Vec<AnnotatedCandidate> {
+        let mut candidates = vec![AnnotatedCandidate {
+            text: base_surface.to_string(),
+            source: CandidateSource::Model,
+            reading: None,
+            commit_kind: CandidateCommitKind::Whole,
+        }];
+        self.append_sentence_alternatives(reading, base_surface, &mut candidates);
+        candidates
+    }
+
+    #[cfg(test)]
+    /// Look up learned exact-match candidates for a reading (max 3).
     ///
     /// Returns candidates from the learning cache suitable for auto-suggest display.
     pub(super) fn lookup_learning_candidates(&self, reading: &str) -> Vec<Candidate> {
@@ -746,7 +1065,6 @@ impl InputMethodEngine {
         let mut seen = HashSet::new();
         let label = CandidateSource::Learning.label().to_string();
 
-        // Exact match
         for (surface, _score) in cache.lookup(reading) {
             if candidates.len() >= MAX_LEARNING_CANDIDATES {
                 break;
@@ -762,43 +1080,7 @@ impl InputMethodEngine {
             }
         }
 
-        // Prefix match (predictive)
-        for (full_reading, surface, _score) in cache.prefix_lookup(reading) {
-            if candidates.len() >= MAX_LEARNING_CANDIDATES {
-                break;
-            }
-            if full_reading == reading {
-                continue;
-            }
-            if seen.insert(surface.clone()) {
-                candidates.push(Candidate {
-                    text: surface,
-                    reading: Some(full_reading),
-                    annotation: Some(label.clone()),
-                    index: candidates.len(),
-                    commit_kind: CandidateCommitKind::Whole,
-                });
-            }
-        }
-
         candidates
-    }
-
-    /// Look up dictionary candidates for a reading (1 page, for live conversion display)
-    ///
-    /// Searches user dictionary first, then system dictionary.
-    pub(super) fn lookup_dict_candidates(&self, reading: &str) -> Vec<Candidate> {
-        self.search_dictionaries(reading, CandidateList::DEFAULT_PAGE_SIZE)
-            .into_iter()
-            .enumerate()
-            .map(|(i, ac)| Candidate {
-                text: ac.text,
-                reading: Some(reading.to_string()),
-                annotation: Some(ac.source.label().to_string()),
-                index: i,
-                commit_kind: CandidateCommitKind::Whole,
-            })
-            .collect()
     }
 
     /// Merge two candidate lists with deduplication
@@ -896,10 +1178,10 @@ impl InputMethodEngine {
             return EngineResult::not_consumed();
         };
         if session.segments.len() != 1 || session.active_segment != 0 {
-            let Some((text, reading)) = self.selected_conversion_info() else {
+            let Some((text, _reading)) = self.selected_conversion_info() else {
                 return EngineResult::not_consumed();
             };
-            return self.finish_full_conversion(text, reading);
+            return self.finish_full_conversion(text);
         }
 
         let Some(candidate) = session
@@ -914,13 +1196,22 @@ impl InputMethodEngine {
         let committed_len = committed_reading_len.min(reading_len);
         let remaining_reading = Self::slice_chars(&session.reading, committed_len, reading_len);
         if remaining_reading.is_empty() {
-            return self
-                .finish_full_conversion(candidate.text.clone(), Some(session.reading.clone()));
+            return self.finish_full_conversion(candidate.text.clone());
         }
 
         let committed_text = candidate.text.clone();
         let committed_reading = Self::slice_chars(&session.reading, 0, committed_len);
-        self.record_learning(&committed_reading, &committed_text);
+        let explicit = session
+            .segments
+            .first()
+            .is_some_and(|segment| segment.explicit_candidate_selection);
+        let default_text = session
+            .segments
+            .first()
+            .and_then(|segment| segment.candidates.candidates().first())
+            .map(|candidate| candidate.text.clone())
+            .unwrap_or_else(|| committed_text.clone());
+        self.record_segment_learning(&committed_reading, &committed_text, &default_text, explicit);
 
         self.input_buf.text = remaining_reading.clone();
         self.input_buf.cursor_pos = 0;
@@ -938,19 +1229,106 @@ impl InputMethodEngine {
     }
 
     /// Record a conversion selection in the learning cache.
-    pub(super) fn record_learning(&mut self, reading: &str, surface: &str) {
+    fn record_learning_mode(&mut self, reading: &str, surface: &str, mode: LearningMode) {
         if let Some(cache) = &mut self.learning {
-            cache.record(reading, surface);
+            match mode {
+                LearningMode::Strong => cache.record_strong(reading, surface),
+                LearningMode::Weak => cache.record_weak(reading, surface),
+                LearningMode::WeakImmediate => cache.record_weak_immediate(reading, surface),
+            }
         }
     }
 
-    fn finish_full_conversion(&mut self, text: String, reading: Option<String>) -> EngineResult {
+    fn learning_records_for_segment(
+        &mut self,
+        reading: &str,
+        selected_surface: &str,
+        default_surface: &str,
+        explicit: bool,
+    ) -> Vec<(String, String, LearningMode)> {
+        let Ok(selected_spans) = self.segment_surface_to_learning_spans(selected_surface, reading)
+        else {
+            return Vec::new();
+        };
+        let Ok(default_spans) = self.segment_surface_to_learning_spans(default_surface, reading)
+        else {
+            return Vec::new();
+        };
+
+        let default_by_range: HashMap<(usize, usize), String> = default_spans
+            .into_iter()
+            .map(|span| ((span.start, span.end), span.surface))
+            .collect();
+
+        selected_spans
+            .into_iter()
+            .filter(|span| span.learnable && !span.surface.is_empty() && !span.reading.is_empty())
+            .map(|span| {
+                let changed = explicit
+                    && default_by_range
+                        .get(&(span.start, span.end))
+                        .is_none_or(|surface| surface != &span.surface);
+                let mode = if changed {
+                    LearningMode::Strong
+                } else if explicit {
+                    LearningMode::WeakImmediate
+                } else {
+                    LearningMode::Weak
+                };
+                (span.reading, span.surface, mode)
+            })
+            .collect()
+    }
+
+    fn record_segment_learning(
+        &mut self,
+        reading: &str,
+        selected_surface: &str,
+        default_surface: &str,
+        explicit: bool,
+    ) {
+        let records =
+            self.learning_records_for_segment(reading, selected_surface, default_surface, explicit);
+        for (span_reading, span_surface, mode) in records {
+            self.record_learning_mode(&span_reading, &span_surface, mode);
+        }
+    }
+
+    fn record_learning_from_session(&mut self, session: &ConversionSession) {
+        let segment_records: Vec<_> = session
+            .segments
+            .iter()
+            .filter_map(|segment| {
+                let reading =
+                    Self::slice_chars(&session.reading, segment.reading_start, segment.reading_end);
+                let selected = segment.selected_text().to_string();
+                let default = segment
+                    .candidates
+                    .candidates()
+                    .first()
+                    .map(|candidate| candidate.text.clone())
+                    .unwrap_or_else(|| selected.clone());
+                (!reading.is_empty() && !selected.is_empty()).then_some((
+                    reading,
+                    selected,
+                    default,
+                    segment.explicit_candidate_selection,
+                ))
+            })
+            .collect();
+
+        for (reading, selected, default, explicit) in segment_records {
+            self.record_segment_learning(&reading, &selected, &default, explicit);
+        }
+    }
+
+    fn finish_full_conversion(&mut self, text: String) -> EngineResult {
         if text.is_empty() {
             return EngineResult::consumed();
         }
 
-        if let Some(reading) = &reading {
-            self.record_learning(reading, &text);
+        if let Some(session) = self.state.conversion_session().cloned() {
+            self.record_learning_from_session(&session);
         }
 
         self.state = InputState::Empty;
@@ -974,10 +1352,10 @@ impl InputMethodEngine {
             return self.commit_prefix_candidate(committed_reading_len);
         }
 
-        let Some((text, reading)) = self.selected_conversion_info() else {
+        let Some((text, _reading)) = self.selected_conversion_info() else {
             return EngineResult::not_consumed();
         };
-        self.finish_full_conversion(text, reading)
+        self.finish_full_conversion(text)
     }
 
     fn confirm_or_next_segment(&mut self) -> EngineResult {
@@ -1018,13 +1396,9 @@ impl InputMethodEngine {
 
     /// Commit current conversion and then process a new character as fresh input
     fn commit_conversion_and_continue(&mut self, ch: char) -> EngineResult {
-        let Some((text, reading)) = self.selected_conversion_info() else {
+        let Some((text, _reading)) = self.selected_conversion_info() else {
             return EngineResult::not_consumed();
         };
-
-        if let Some(reading) = &reading {
-            self.record_learning(reading, &text);
-        }
 
         self.state = InputState::Empty;
         self.input_buf.text.clear();
@@ -1089,7 +1463,9 @@ impl InputMethodEngine {
             let Some(segment) = session.segments.get_mut(session.active_segment) else {
                 return EngineResult::not_consumed();
             };
-            op(&mut segment.candidates);
+            if op(&mut segment.candidates) {
+                segment.explicit_candidate_selection = true;
+            }
             session.enter_segments = false;
         }
         self.direct_mode = None;
@@ -1183,6 +1559,7 @@ impl InputMethodEngine {
                     reading_start: split_at,
                     reading_end: segment.reading_end,
                     candidates: CandidateList::default(),
+                    explicit_candidate_selection: false,
                 },
             );
         }
@@ -1280,6 +1657,7 @@ impl InputMethodEngine {
             return EngineResult::consumed();
         }
         session.enter_segments = false;
+        segment.explicit_candidate_selection = true;
         self.direct_mode = None;
         self.update_conversion_state()
     }
@@ -1324,6 +1702,7 @@ impl InputMethodEngine {
         }]);
         candidates.reset();
         session.segments[active].candidates = candidates;
+        session.segments[active].explicit_candidate_selection = true;
         session.enter_segments = false;
         self.direct_mode = Some(mode);
         self.replace_conversion_session(session)

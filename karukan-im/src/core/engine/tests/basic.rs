@@ -1,4 +1,5 @@
 use super::*;
+use karukan_engine::LearningCache;
 
 #[test]
 fn test_engine_basic_input() {
@@ -41,6 +42,20 @@ fn test_engine_commit_composing() {
         .any(|a| matches!(a, EngineAction::Commit(text) if text == "あい"));
     assert!(has_commit);
     assert!(matches!(engine.state(), InputState::Empty));
+}
+
+#[test]
+fn test_commit_composing_does_not_learn() {
+    let mut engine = InputMethodEngine::new();
+    engine.learning = Some(LearningCache::new(16));
+
+    engine.process_key(&press('a'));
+    engine.process_key(&press('i'));
+
+    let result = engine.process_key(&press_key(Keysym::RETURN));
+
+    assert!(result.consumed);
+    assert!(engine.learning.as_ref().unwrap().lookup("あい").is_empty());
 }
 
 #[test]

@@ -7,5 +7,5 @@ pub mod romaji;
 pub use dict::{Candidate as DictCandidate, DictEntry, Dictionary, LookupResult};
 pub use kana::{hiragana_to_katakana, katakana_to_hiragana, normalize_nfkc};
 pub use kanji::{Backend, KanaKanjiConverter};
-pub use learning::LearningCache;
+pub use learning::{LearningCache, LearningMatch};
 pub use romaji::{BackspaceResult, ConversionEvent, RomajiConverter};

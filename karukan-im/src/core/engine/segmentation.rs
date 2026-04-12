@@ -11,7 +11,9 @@ use super::*;
 
 #[derive(Debug, Clone)]
 struct MorphToken {
+    surface: String,
     reading: String,
+    learnable: bool,
     attach_to_previous: bool,
     attach_to_next: bool,
 }
@@ -19,6 +21,15 @@ struct MorphToken {
 #[derive(Debug, Clone)]
 pub(super) struct BunsetsuSpan {
     pub reading: String,
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct LearningSpan {
+    pub surface: String,
+    pub reading: String,
+    pub start: usize,
+    pub end: usize,
+    pub learnable: bool,
 }
 
 impl MorphToken {
@@ -35,7 +46,9 @@ impl MorphToken {
             .or_else(|| Self::reading_from_surface(&surface))?;
 
         Some(Self {
+            surface,
             reading,
+            learnable: !matches!(pos1, "助詞" | "助動詞" | "記号" | "接頭詞") && pos2 != "接尾",
             attach_to_previous: matches!(pos1, "助詞" | "助動詞" | "記号") || pos2 == "接尾",
             attach_to_next: pos1 == "接頭詞",
         })
@@ -122,20 +135,29 @@ impl InputMethodEngine {
         surface: &str,
         reading: &str,
     ) -> Result<Vec<(usize, usize)>> {
-        let bunsetsu = self.segment_surface_to_bunsetsu(surface)?;
-        let mut ranges = Vec::with_capacity(bunsetsu.len());
+        let tokens = self.lindera_tokens(surface)?;
+        let mut ranges = Vec::new();
         let mut start = 0;
+        let mut current_len = 0;
+        let mut current_attaches_next = false;
 
-        for span in bunsetsu {
-            let segment_reading = span.reading;
-            let len = segment_reading.chars().count();
-            let end = start + len;
-            if Self::slice_chars(reading, start, end) != segment_reading {
-                return Err(anyhow!(
-                    "bunsetsu reading mismatch: expected '{}', got '{}'",
-                    Self::slice_chars(reading, start, end),
-                    segment_reading
-                ));
+        for token in tokens {
+            let should_join =
+                current_len > 0 && (token.attach_to_previous || current_attaches_next);
+            if !should_join && current_len > 0 {
+                let end = start + current_len;
+                ranges.push((start, end));
+                start = end;
+                current_len = 0;
+            }
+            current_len += token.reading.chars().count();
+            current_attaches_next = token.attach_to_next;
+        }
+
+        if current_len > 0 {
+            let end = start + current_len;
+            if end > reading.chars().count() {
+                return Err(anyhow!("bunsetsu reading exceeded full input"));
             }
             ranges.push((start, end));
             start = end;
@@ -146,5 +168,50 @@ impl InputMethodEngine {
         }
 
         Ok(ranges)
+    }
+
+    pub(super) fn segment_surface_to_learning_spans(
+        &mut self,
+        surface: &str,
+        reading: &str,
+    ) -> Result<Vec<LearningSpan>> {
+        let tokens = self.lindera_tokens(surface)?;
+        let mut spans = Vec::with_capacity(tokens.len());
+        let mut start = 0;
+        let reading_len = reading.chars().count();
+
+        for token in tokens {
+            let len = token.reading.chars().count();
+            let end = start + len;
+            if end > reading_len {
+                return Err(anyhow!(
+                    "learning spans exceeded input reading length at {}..{}",
+                    start,
+                    end
+                ));
+            }
+            let span_reading = Self::slice_chars(reading, start, end);
+            if span_reading.is_empty() {
+                return Err(anyhow!(
+                    "learning spans did not align with input reading at {}..{}",
+                    start,
+                    end
+                ));
+            }
+            spans.push(LearningSpan {
+                surface: token.surface,
+                reading: span_reading,
+                start,
+                end,
+                learnable: token.learnable,
+            });
+            start = end;
+        }
+
+        if start != reading_len {
+            return Err(anyhow!("learning spans did not cover full input"));
+        }
+
+        Ok(spans)
     }
 }

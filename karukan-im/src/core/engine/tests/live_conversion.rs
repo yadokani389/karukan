@@ -1,4 +1,5 @@
 use super::*;
+use karukan_engine::LearningCache;
 
 // --- Live conversion tests ---
 
@@ -171,6 +172,105 @@ fn test_live_conversion_normalizes_symbol_width() {
 
     let preedit = engine.build_composing_preedit();
     assert_eq!(preedit.text(), "abc！？");
+}
+
+#[test]
+fn test_live_conversion_rewrites_segment_from_user_dictionary() {
+    let mut engine = make_live_conversion_engine();
+    engine.dicts.user = Some(make_test_dictionary(
+        r#"[
+            {"reading":"あめ","candidates":[{"surface":"飴","score":0.0}]}
+        ]"#,
+    ));
+
+    let preserved = engine.make_preserved_candidate("今日は雨", CandidateSource::Model);
+    let rewritten = engine.rerank_auto_suggest_text("きょうはあめ", &preserved);
+
+    assert_eq!(rewritten, "今日は飴");
+}
+
+#[test]
+fn test_live_conversion_rewrites_segment_from_strong_learning() {
+    let mut engine = make_live_conversion_engine();
+    let mut learning = LearningCache::new(16);
+    learning.record_strong("あめ", "飴");
+    engine.learning = Some(learning);
+
+    let preserved = engine.make_preserved_candidate("今日は雨", CandidateSource::Model);
+    let rewritten = engine.rerank_auto_suggest_text("きょうはあめ", &preserved);
+
+    assert_eq!(rewritten, "今日は飴");
+}
+
+#[test]
+fn test_live_conversion_rewrites_preserved_sentence_segment_from_strong_learning() {
+    let mut engine = make_live_conversion_engine();
+    let mut learning = LearningCache::new(16);
+    learning.record_strong("あめ", "飴");
+    engine.learning = Some(learning);
+
+    let preserved = engine.make_preserved_candidate("雨です", CandidateSource::Model);
+    let rewritten = engine.rerank_auto_suggest_text("あめです", &preserved);
+
+    assert_eq!(rewritten, "飴です");
+}
+
+#[test]
+fn test_live_conversion_prefers_user_dictionary_over_strong_learning() {
+    let mut engine = make_live_conversion_engine();
+    engine.dicts.user = Some(make_test_dictionary(
+        r#"[
+            {"reading":"あめ","candidates":[{"surface":"雨","score":0.0}]}
+        ]"#,
+    ));
+    let mut learning = LearningCache::new(16);
+    learning.record_strong("あめ", "飴");
+    engine.learning = Some(learning);
+
+    let preserved = engine.make_preserved_candidate("今日は飴", CandidateSource::Model);
+    let rewritten = engine.rerank_auto_suggest_text("きょうはあめ", &preserved);
+
+    assert_eq!(rewritten, "今日は雨");
+}
+
+#[test]
+fn test_live_conversion_ignores_weak_learning_for_rewrite() {
+    let mut engine = make_live_conversion_engine();
+    let mut learning = LearningCache::new(16);
+    learning.record_weak("あめ", "飴");
+    learning.record_weak("あめ", "飴");
+    learning.record_weak("あめ", "飴");
+    engine.learning = Some(learning);
+
+    let preserved = engine.make_preserved_candidate("今日は雨", CandidateSource::Model);
+    let rewritten = engine.rerank_auto_suggest_text("きょうはあめ", &preserved);
+
+    assert_eq!(rewritten, "今日は雨");
+}
+
+#[test]
+fn test_live_conversion_preserves_unlearned_default_surface() {
+    let mut engine = make_live_conversion_engine();
+
+    let preserved = engine.make_preserved_candidate("のは", CandidateSource::Model);
+    let rewritten = engine.rerank_auto_suggest_text("のは", &preserved);
+
+    assert_eq!(rewritten, "のは");
+}
+
+#[test]
+fn test_live_conversion_keeps_preserved_model_top_candidate() {
+    let mut engine = make_live_conversion_engine();
+    engine.dicts.user = Some(make_test_dictionary(
+        r#"[
+            {"reading":"どうかな","candidates":[{"surface":"どうかな〜","score":0.0}]}
+        ]"#,
+    ));
+
+    let preserved = engine.make_preserved_candidate("どうかな", CandidateSource::Model);
+    let rewritten = engine.rerank_auto_suggest_text("どうかな", &preserved);
+
+    assert_eq!(rewritten, "どうかな");
 }
 
 // --- Ctrl+Space full-width space tests ---

@@ -21,7 +21,9 @@ use input_buffer::InputBuffer;
 #[cfg(test)]
 mod tests;
 
-use karukan_engine::{Dictionary, KanaKanjiConverter, LearningCache, RomajiConverter};
+use karukan_engine::{
+    Dictionary, KanaKanjiConverter, LearningCache, LearningMatch, RomajiConverter,
+};
 use tracing::{debug, trace};
 
 use super::candidate::{Candidate, CandidateCommitKind, CandidateList};
@@ -498,8 +500,6 @@ impl InputMethodEngine {
                 } else {
                     reading.clone()
                 };
-                // Record live conversion result in learning cache
-                self.record_learning(&reading, &text);
                 self.converters.romaji.reset();
                 self.input_buf.clear();
                 self.live.text.clear();
@@ -511,11 +511,6 @@ impl InputMethodEngine {
             }
             InputState::Conversion { session, .. } => {
                 let text = session.composed_text();
-                let reading = Some(session.reading.clone());
-                // Record conversion result in learning cache
-                if let Some(reading) = &reading {
-                    self.record_learning(reading, &text);
-                }
                 self.input_buf.clear();
                 self.direct_mode = None;
                 self.raw_units.clear();

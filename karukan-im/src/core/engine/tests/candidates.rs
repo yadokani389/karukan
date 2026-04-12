@@ -1,4 +1,5 @@
 use super::*;
+use karukan_engine::LearningCache;
 
 // --- Candidate preservation tests ---
 
@@ -96,4 +97,64 @@ fn test_empty_live_text_not_added_to_candidates() {
             "Empty candidate should not be in the list"
         );
     }
+}
+
+#[test]
+fn test_sentence_alternatives_include_strong_learning_and_user_dictionary() {
+    let mut engine = make_live_conversion_engine();
+    engine.learning = Some(LearningCache::new(16));
+    engine.learning.as_mut().unwrap().record_strong("め", "眼");
+    engine.learning.as_mut().unwrap().record_strong("め", "芽");
+    engine.dicts.user = Some(make_test_dictionary(
+        r#"[
+            {"reading":"め","candidates":[{"surface":"瞳","score":0.0}]}
+        ]"#,
+    ));
+
+    let candidates = engine.sentence_alternatives_for_test("めがある", "目がある");
+    let texts: Vec<_> = candidates
+        .into_iter()
+        .map(|candidate| candidate.text)
+        .collect();
+
+    assert!(texts.iter().any(|text| text == "目がある"));
+    assert!(texts.iter().any(|text| text == "眼がある"));
+    assert!(texts.iter().any(|text| text == "芽がある"));
+    assert!(texts.iter().any(|text| text == "瞳がある"));
+}
+
+#[test]
+fn test_sentence_alternatives_appear_in_conversion_candidates() {
+    let mut engine = make_live_conversion_engine();
+    engine.learning = Some(LearningCache::new(16));
+    engine.learning.as_mut().unwrap().record_strong("め", "眼");
+    engine.learning.as_mut().unwrap().record_strong("め", "芽");
+    engine.dicts.user = Some(make_test_dictionary(
+        r#"[
+            {"reading":"め","candidates":[{"surface":"瞳","score":0.0}]}
+        ]"#,
+    ));
+
+    engine.process_key(&press('m'));
+    engine.process_key(&press('e'));
+    engine.process_key(&press('g'));
+    engine.process_key(&press('a'));
+    engine.process_key(&press('a'));
+    engine.process_key(&press('r'));
+    engine.process_key(&press('u'));
+    engine.live.text = "目がある".to_string();
+
+    let result = engine.process_key(&press_key(Keysym::DOWN));
+    assert!(result.consumed);
+
+    let candidates = engine.state().candidates().unwrap();
+    let texts: Vec<_> = candidates
+        .candidates()
+        .iter()
+        .map(|candidate| candidate.text.as_str())
+        .collect();
+    assert!(texts.contains(&"目がある"));
+    assert!(texts.contains(&"眼がある"));
+    assert!(texts.contains(&"芽がある"));
+    assert!(texts.contains(&"瞳がある"));
 }

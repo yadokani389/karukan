@@ -14,6 +14,8 @@ pub struct ConversionSegment {
     pub reading_end: usize,
     /// Candidates for this segment.
     pub candidates: CandidateList,
+    /// Whether the user explicitly changed the candidate for this segment.
+    pub explicit_candidate_selection: bool,
 }
 
 impl ConversionSegment {

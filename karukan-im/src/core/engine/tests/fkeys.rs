@@ -106,6 +106,7 @@ fn test_f10_from_conversion_uses_raw_sequence() {
                 reading_start: 0,
                 reading_end: 1,
                 candidates,
+                explicit_candidate_selection: false,
             }],
             active_segment: 0,
             segmentation_applied: true,

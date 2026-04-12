@@ -16,6 +16,7 @@ fn make_single_segment_conversion(reading: &str, surface: &str) -> InputMethodEn
                 reading_start: 0,
                 reading_end: reading.chars().count(),
                 candidates,
+                explicit_candidate_selection: false,
             }],
             active_segment: 0,
             segmentation_applied: false,
@@ -43,6 +44,7 @@ fn make_single_segment_conversion_with_candidates(
                 reading_start: 0,
                 reading_end: reading.chars().count(),
                 candidates,
+                explicit_candidate_selection: false,
             }],
             active_segment: 0,
             segmentation_applied: false,
@@ -50,6 +52,28 @@ fn make_single_segment_conversion_with_candidates(
         },
     };
     engine
+}
+
+fn set_single_segment_conversion(engine: &mut InputMethodEngine, reading: &str, surface: &str) {
+    let candidates = CandidateList::from_strings_with_reading([surface], reading);
+    engine.input_buf.text = reading.to_string();
+    engine.input_buf.cursor_pos = reading.chars().count();
+    engine.state = InputState::Conversion {
+        preedit: Preedit::with_text(surface),
+        candidates: candidates.clone(),
+        session: ConversionSession {
+            reading: reading.to_string(),
+            segments: vec![ConversionSegment {
+                reading_start: 0,
+                reading_end: reading.chars().count(),
+                candidates,
+                explicit_candidate_selection: false,
+            }],
+            active_segment: 0,
+            segmentation_applied: false,
+            enter_segments: true,
+        },
+    };
 }
 
 #[test]
@@ -490,4 +514,192 @@ fn test_prefix_commit_candidates_reconvert_first_reading() {
 
     assert!(texts.iter().any(|text| text == "今日は"));
     assert!(texts.iter().any(|text| text == "教派"));
+}
+
+#[test]
+fn test_enter_without_explicit_selection_does_not_learn() {
+    let mut engine = make_single_segment_conversion_with_candidates(
+        "きょうは",
+        vec![
+            Candidate::with_reading("今日は", "きょうは"),
+            Candidate::with_reading("教派", "きょうは").with_index(1),
+        ],
+    );
+    engine.learning = Some(LearningCache::new(16));
+
+    let result = engine.process_key(&press_key(Keysym::RETURN));
+
+    assert!(result.consumed);
+    assert!(matches!(engine.state(), InputState::Empty));
+    assert!(
+        engine
+            .learning
+            .as_ref()
+            .unwrap()
+            .lookup("きょうは")
+            .is_empty()
+    );
+}
+
+#[test]
+fn test_enter_after_explicit_candidate_selection_learns() {
+    let mut engine = make_single_segment_conversion_with_candidates(
+        "きょうは",
+        vec![
+            Candidate::with_reading("今日は", "きょうは"),
+            Candidate::with_reading("教派", "きょうは").with_index(1),
+        ],
+    );
+    engine.learning = Some(LearningCache::new(16));
+
+    engine.process_key(&press_key(Keysym::DOWN));
+    let result = engine.process_key(&press_key(Keysym::RETURN));
+
+    assert!(result.consumed);
+    assert!(matches!(engine.state(), InputState::Empty));
+    let learned = engine.learning.as_ref().unwrap().lookup("きょうは");
+    assert_eq!(learned.len(), 1);
+    assert_eq!(learned[0].0, "教派");
+}
+
+#[test]
+fn test_conversion_commit_and_continue_does_not_learn() {
+    let mut engine = make_single_segment_conversion_with_candidates(
+        "きょうは",
+        vec![
+            Candidate::with_reading("今日は", "きょうは"),
+            Candidate::with_reading("教派", "きょうは").with_index(1),
+        ],
+    );
+    engine.learning = Some(LearningCache::new(16));
+
+    engine.process_key(&press_key(Keysym::DOWN));
+    let result = engine.process_key(&press('k'));
+
+    assert!(result.consumed);
+    assert!(matches!(engine.state(), InputState::Composing { .. }));
+    assert!(
+        engine
+            .learning
+            .as_ref()
+            .unwrap()
+            .lookup("きょうは")
+            .is_empty()
+    );
+}
+
+#[test]
+fn test_learning_candidates_require_exact_match() {
+    let mut engine = InputMethodEngine::new();
+    let mut learning = LearningCache::new(16);
+    learning.record("きょうはいいてんきですね", "今日はいい天気ですね");
+    engine.learning = Some(learning);
+
+    assert!(engine.lookup_learning_candidates("きょう").is_empty());
+
+    let exact = engine.lookup_learning_candidates("きょうはいいてんきですね");
+    assert_eq!(exact.len(), 1);
+    assert_eq!(exact[0].text, "今日はいい天気ですね");
+}
+
+#[test]
+fn test_repeated_default_commit_eventually_learns() {
+    let mut engine = InputMethodEngine::new();
+    engine.learning = Some(LearningCache::new(16));
+
+    for _ in 0..2 {
+        set_single_segment_conversion(&mut engine, "てんき", "天気");
+        let result = engine.process_key(&press_key(Keysym::RETURN));
+        assert!(result.consumed);
+    }
+
+    assert!(
+        engine
+            .learning
+            .as_ref()
+            .unwrap()
+            .lookup_matches("てんき")
+            .is_empty()
+    );
+
+    set_single_segment_conversion(&mut engine, "てんき", "天気");
+    let result = engine.process_key(&press_key(Keysym::RETURN));
+    assert!(result.consumed);
+
+    let learned = engine.learning.as_ref().unwrap().lookup_matches("てんき");
+    assert_eq!(learned.len(), 1);
+    assert_eq!(learned[0].surface, "天気");
+}
+
+#[test]
+fn test_user_dictionary_ranks_above_single_strong_learning() {
+    let mut engine = InputMethodEngine::new();
+    engine.dicts.user = Some(make_test_dictionary(
+        r#"[
+            {"reading":"あめ","candidates":[{"surface":"雨","score":0.0}]}
+        ]"#,
+    ));
+    let mut learning = LearningCache::new(16);
+    learning.record_strong("あめ", "飴");
+    engine.learning = Some(learning);
+
+    let candidates = engine.build_exact_conversion_candidates("あめ", 3);
+
+    assert_eq!(candidates[0].text, "雨");
+}
+
+#[test]
+fn test_sentence_commit_learns_content_words_only() {
+    let mut engine = make_single_segment_conversion_with_candidates(
+        "きょうはいいてんきです",
+        vec![
+            Candidate::with_reading("今日はいい天気です", "きょうはいいてんきです"),
+            Candidate::with_reading("今日は良い天気です", "きょうはいいてんきです").with_index(1),
+        ],
+    );
+    engine.learning = Some(LearningCache::new(32));
+
+    engine.process_key(&press_key(Keysym::DOWN));
+    let result = engine.process_key(&press_key(Keysym::RETURN));
+
+    assert!(result.consumed);
+
+    let learning = engine.learning.as_ref().unwrap();
+    let ii = learning.lookup_matches("いい");
+    assert_eq!(ii.len(), 1);
+    assert_eq!(ii[0].surface, "良い");
+    assert!(ii[0].strong_selections > 0);
+
+    let kyou = learning.lookup_matches("きょう");
+    assert_eq!(kyou.len(), 1);
+    assert_eq!(kyou[0].surface, "今日");
+    assert_eq!(kyou[0].strong_selections, 0);
+    assert!(kyou[0].weak_accepts > 0);
+
+    let tenki = learning.lookup_matches("てんき");
+    assert_eq!(tenki.len(), 1);
+    assert_eq!(tenki[0].surface, "天気");
+    assert_eq!(tenki[0].strong_selections, 0);
+    assert!(tenki[0].weak_accepts > 0);
+
+    assert!(learning.lookup_matches("は").is_empty());
+    assert!(learning.lookup_matches("です").is_empty());
+}
+
+#[test]
+fn test_commit_api_does_not_learn_conversion_without_explicit_selection() {
+    let mut engine = make_single_segment_conversion("きょうは", "今日は");
+    engine.learning = Some(LearningCache::new(16));
+
+    let text = engine.commit();
+
+    assert_eq!(text, "今日は");
+    assert!(
+        engine
+            .learning
+            .as_ref()
+            .unwrap()
+            .lookup("きょうは")
+            .is_empty()
+    );
 }

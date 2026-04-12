@@ -2,6 +2,8 @@
 
 use super::*;
 use crate::core::keycode::KeyModifiers;
+use karukan_engine::Dictionary;
+use tempfile::NamedTempFile;
 
 mod alphabet;
 mod basic;
@@ -61,6 +63,12 @@ fn make_live_conversion_engine() -> InputMethodEngine {
     let mut engine = InputMethodEngine::new();
     engine.live.enabled = true;
     engine
+}
+
+fn make_test_dictionary(json: &str) -> Dictionary {
+    let file = NamedTempFile::new().unwrap();
+    std::fs::write(file.path(), json).unwrap();
+    Dictionary::build_from_json(file.path()).unwrap()
 }
 
 fn make_symbol_engine(
