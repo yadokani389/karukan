@@ -11,10 +11,12 @@ fn test_engine_basic_input() {
     assert!(result.consumed);
     assert!(matches!(engine.state(), InputState::Composing { .. }));
     assert_eq!(engine.preedit().unwrap().text(), "あい");
-    assert!(result
-        .actions
-        .iter()
-        .any(|action| matches!(action, EngineAction::HideCandidates)));
+    assert!(
+        result
+            .actions
+            .iter()
+            .any(|action| matches!(action, EngineAction::HideCandidates))
+    );
 }
 
 #[test]

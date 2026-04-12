@@ -134,23 +134,23 @@ impl InputMethodEngine {
             return EngineResult::consumed().with_action(EngineAction::UpdatePreedit(preedit));
         }
 
-        let suggestions = if self.input_mode != InputMode::Alphabet && !self.input_buf.text.is_empty()
-        {
-            let reading = self.input_buf.text.clone();
-            let live_text = self.build_live_conversion_text(&reading);
-            let has_non_fallback = self
-                .build_exact_conversion_ranked_candidates(
-                    &reading,
-                    self.config
-                        .num_candidates
-                        .max(CandidateList::DEFAULT_PAGE_SIZE),
-                )
-                .iter()
-                .any(|candidate| candidate.source() != CandidateSource::Fallback);
-            Some((live_text, has_non_fallback))
-        } else {
-            None
-        };
+        let suggestions =
+            if self.input_mode != InputMode::Alphabet && !self.input_buf.text.is_empty() {
+                let reading = self.input_buf.text.clone();
+                let live_text = self.build_live_conversion_text(&reading);
+                let has_non_fallback = self
+                    .build_exact_conversion_ranked_candidates(
+                        &reading,
+                        self.config
+                            .num_candidates
+                            .max(CandidateList::DEFAULT_PAGE_SIZE),
+                    )
+                    .iter()
+                    .any(|candidate| candidate.source() != CandidateSource::Fallback);
+                Some((live_text, has_non_fallback))
+            } else {
+                None
+            };
 
         let Some((live_text, has_non_fallback)) = suggestions else {
             self.live.text.clear();

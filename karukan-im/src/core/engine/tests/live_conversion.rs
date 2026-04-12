@@ -35,10 +35,12 @@ fn test_live_conversion_off_unchanged() {
     let result = engine.process_key(&press('i'));
     assert_eq!(engine.preedit().unwrap().text(), "あい");
     assert!(engine.live.text.is_empty());
-    assert!(result
-        .actions
-        .iter()
-        .any(|action| matches!(action, EngineAction::HideCandidates)));
+    assert!(
+        result
+            .actions
+            .iter()
+            .any(|action| matches!(action, EngineAction::HideCandidates))
+    );
 }
 
 #[test]
@@ -49,10 +51,12 @@ fn test_live_conversion_keeps_candidates_hidden_while_composing() {
     let result = engine.process_key(&press('i'));
 
     assert!(matches!(engine.state(), InputState::Composing { .. }));
-    assert!(result
-        .actions
-        .iter()
-        .any(|action| matches!(action, EngineAction::HideCandidates)));
+    assert!(
+        result
+            .actions
+            .iter()
+            .any(|action| matches!(action, EngineAction::HideCandidates))
+    );
 }
 
 #[test]

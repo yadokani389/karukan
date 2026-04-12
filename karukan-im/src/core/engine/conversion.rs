@@ -327,22 +327,24 @@ impl InputMethodEngine {
                 continue;
             }
 
-            let Ok(bunsetsu) = self.segment_surface_to_bunsetsu(&candidate.text) else {
+            let Ok(ranges) = self.segment_surface_to_ranges(&candidate.text, reading) else {
                 continue;
             };
-            let Some(first) = bunsetsu.first().cloned() else {
+            let Some((first_start, first_end)) = ranges.first().copied() else {
                 continue;
             };
-            if bunsetsu.len() <= 1
-                || first.reading == reading
-                || !seen_prefix_readings.insert(first.reading.clone())
+            let first_reading = Self::slice_chars(reading, first_start, first_end);
+            if ranges.len() <= 1
+                || first_start != 0
+                || first_reading == reading
+                || !seen_prefix_readings.insert(first_reading.clone())
             {
                 continue;
             }
 
-            let committed_reading_len = first.reading.chars().count();
+            let committed_reading_len = first_end;
             for prefix_candidate in
-                self.build_exact_conversion_candidates(&first.reading, num_candidates)
+                self.build_exact_conversion_candidates(&first_reading, num_candidates)
             {
                 if !seen.insert(prefix_candidate.text.clone()) {
                     continue;
@@ -351,7 +353,7 @@ impl InputMethodEngine {
                 prefix_candidates.push(AnnotatedCandidate {
                     text: prefix_candidate.text,
                     source: prefix_candidate.source,
-                    reading: Some(first.reading.clone()),
+                    reading: Some(first_reading.clone()),
                     commit_kind: CandidateCommitKind::Prefix {
                         committed_reading_len,
                     },

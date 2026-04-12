@@ -517,6 +517,20 @@ fn test_prefix_commit_candidates_reconvert_first_reading() {
 }
 
 #[test]
+fn test_prefix_commit_candidates_skip_misaligned_reading() {
+    let mut engine = InputMethodEngine::new();
+
+    let session = engine.build_single_segment_session("さいすい", Some("都立".to_string()));
+    let candidates = session.segments[0].candidates.candidates();
+
+    assert!(candidates.iter().any(|candidate| candidate.text == "都立"));
+    assert!(candidates.iter().all(|candidate| {
+        !matches!(candidate.commit_kind, CandidateCommitKind::Prefix { .. })
+            || candidate.reading.as_deref() != Some("と")
+    }));
+}
+
+#[test]
 fn test_enter_without_explicit_selection_does_not_learn() {
     let mut engine = make_single_segment_conversion_with_candidates(
         "きょうは",
