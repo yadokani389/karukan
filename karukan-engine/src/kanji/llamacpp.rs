@@ -14,9 +14,11 @@ use llama_cpp_2::model::LlamaModel;
 use llama_cpp_2::model::params::LlamaModelParams;
 use llama_cpp_2::sampling::LlamaSampler;
 use llama_cpp_2::token::LlamaToken;
+use llama_cpp_2::{LlamaBackendDeviceType, list_llama_ggml_backend_devices};
 use std::num::NonZeroU32;
 use std::path::Path;
 use std::sync::OnceLock;
+use tracing::info;
 
 /// Global llama.cpp backend (can only be initialized once)
 static LLAMA_BACKEND: OnceLock<std::result::Result<LlamaBackend, String>> = OnceLock::new();
@@ -39,6 +41,49 @@ fn get_backend() -> Result<&'static LlamaBackend> {
 /// Convert bytes to hex display format for partial UTF-8 sequences
 fn bytes_to_hex_display(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("<{:02X}>", b)).collect()
+}
+
+/// Decide whether the current backend can offload layers to a GPU.
+fn gpu_layer_count(backend: &LlamaBackend) -> u32 {
+    if !backend.supports_gpu_offload() {
+        return 0;
+    }
+
+    let has_gpu_device = list_llama_ggml_backend_devices().into_iter().any(|device| {
+        matches!(
+            device.device_type,
+            LlamaBackendDeviceType::Gpu
+                | LlamaBackendDeviceType::IntegratedGpu
+                | LlamaBackendDeviceType::Accelerator
+        )
+    });
+
+    if has_gpu_device { u32::MAX } else { 0 }
+}
+
+/// Collect visible GPU-like backend devices for logging.
+fn gpu_device_labels(backend: &LlamaBackend) -> Vec<String> {
+    if !backend.supports_gpu_offload() {
+        return Vec::new();
+    }
+
+    list_llama_ggml_backend_devices()
+        .into_iter()
+        .filter(|device| {
+            matches!(
+                device.device_type,
+                LlamaBackendDeviceType::Gpu
+                    | LlamaBackendDeviceType::IntegratedGpu
+                    | LlamaBackendDeviceType::Accelerator
+            )
+        })
+        .map(|device| {
+            format!(
+                "{}: {} ({})",
+                device.index, device.description, device.backend
+            )
+        })
+        .collect()
 }
 
 /// Load and configure an external HuggingFace tokenizer from a `tokenizer.json` file.
@@ -73,12 +118,21 @@ pub struct LlamaCppModel {
 impl LlamaCppModel {
     /// Load a GGUF model using llama.cpp with an external tokenizer.
     ///
-    /// GPT-2 models use CPU only (Metal has issues with GPT-2).
+    /// GPT-2 models use GPU offload when a supported backend is available.
     pub fn from_file<P: AsRef<Path>, T: AsRef<Path>>(path: P, tokenizer_json: T) -> Result<Self> {
         let backend = get_backend()?;
-
-        // GPT-2 has Metal issues, use CPU
-        let model_params = LlamaModelParams::default().with_n_gpu_layers(0);
+        let gpu_layers = gpu_layer_count(backend);
+        let gpu_devices = gpu_device_labels(backend);
+        if gpu_layers > 0 {
+            info!(
+                gpu_layers,
+                gpu_devices = %gpu_devices.join(", "),
+                "Enabled llama.cpp GPU offload"
+            );
+        } else {
+            info!("Using CPU-only llama.cpp inference");
+        }
+        let model_params = LlamaModelParams::default().with_n_gpu_layers(gpu_layers);
 
         let model = LlamaModel::load_from_file(backend, path.as_ref(), &model_params)
             .map_err(|e| KanjiError::ModelLoad(e.into()))?;
@@ -108,7 +162,8 @@ impl LlamaCppModel {
 
         let backend = get_backend()?;
 
-        let mut params = pin!(LlamaModelParams::default().with_n_gpu_layers(0));
+        let mut params =
+            pin!(LlamaModelParams::default().with_n_gpu_layers(gpu_layer_count(backend)));
 
         let key =
             CString::new("tokenizer.ggml.pre").map_err(|e| KanjiError::ModelLoad(e.into()))?;
@@ -143,7 +198,7 @@ impl LlamaCppModel {
     ) -> Result<Self> {
         let backend = get_backend()?;
 
-        let model_params = LlamaModelParams::default().with_n_gpu_layers(0);
+        let model_params = LlamaModelParams::default().with_n_gpu_layers(gpu_layer_count(backend));
 
         let model = LlamaModel::load_from_file(backend, path.as_ref(), &model_params)
             .map_err(|e| KanjiError::ModelLoad(e.into()))?;

@@ -25,7 +25,7 @@ tracing-subscriber.workspace = true
 toml.workspace = true
 
 # llama.cpp bindings for GGUF inference
-llama-cpp-2 = "0.1"
+llama-cpp-2 = { version = "0.1", features = ["vulkan"] }
 yada = "0.5"
 
 # HuggingFace model download

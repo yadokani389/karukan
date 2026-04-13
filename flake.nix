@@ -57,6 +57,9 @@
               llvmPackages.libclang
               openssl
               libxkbcommon
+              vulkan-headers
+              vulkan-loader
+              shaderc
             ];
           };
 
