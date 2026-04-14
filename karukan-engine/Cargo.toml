@@ -15,6 +15,10 @@ categories = ["text-processing", "internationalization"]
 name = "karukan_engine"
 path = "src/lib.rs"
 
+[features]
+default = []
+gpu-vulkan = ["llama-cpp-2/vulkan"]
+
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
@@ -25,7 +29,7 @@ tracing-subscriber.workspace = true
 toml.workspace = true
 
 # llama.cpp bindings for GGUF inference
-llama-cpp-2 = { version = "0.1", features = ["vulkan"] }
+llama-cpp-2 = "0.1"
 yada = "0.5"
 
 # HuggingFace model download

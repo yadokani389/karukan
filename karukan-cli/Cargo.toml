@@ -42,3 +42,7 @@ path = "src/bin/ajimee_bench.rs"
 [[bin]]
 name = "karukan-server"
 path = "src/bin/server.rs"
+
+[features]
+default = []
+gpu-vulkan = ["karukan-engine/gpu-vulkan"]
