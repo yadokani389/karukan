@@ -43,3 +43,4 @@ tempfile.workspace = true
 
 [features]
 default = []
+gpu-vulkan = ["karukan-engine/gpu-vulkan"]
