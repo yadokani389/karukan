@@ -499,6 +499,7 @@ impl InputMethodEngine {
         self.live.text.clear();
         self.state = InputState::Empty;
         self.direct_mode = None;
+        self.input_mode = InputMode::Hiragana;
 
         EngineResult::consumed()
             .with_action(EngineAction::UpdatePreedit(Preedit::new()))
@@ -532,6 +533,7 @@ impl InputMethodEngine {
         self.live.text.clear();
         self.state = InputState::Empty;
         self.direct_mode = None;
+        self.input_mode = InputMode::Hiragana;
 
         EngineResult::consumed()
             .with_action(EngineAction::UpdatePreedit(Preedit::new()))

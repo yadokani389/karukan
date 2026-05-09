@@ -504,6 +504,7 @@ impl InputMethodEngine {
                 self.input_buf.clear();
                 self.live.text.clear();
                 self.direct_mode = None;
+                self.input_mode = InputMode::Hiragana;
                 self.state = InputState::Empty;
                 self.raw_units.clear();
                 self.surrounding_context = None;
@@ -514,6 +515,7 @@ impl InputMethodEngine {
                 self.input_buf.clear();
                 self.direct_mode = None;
                 self.raw_units.clear();
+                self.input_mode = InputMode::Hiragana;
                 self.state = InputState::Empty;
                 self.surrounding_context = None;
                 text

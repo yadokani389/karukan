@@ -228,7 +228,7 @@ fn test_mixed_hiragana_alphabet_input() {
 }
 
 #[test]
-fn test_alphabet_mode_persists_across_commit() {
+fn test_alphabet_mode_resets_after_commit() {
     let mut engine = InputMethodEngine::new();
 
     // Enter alphabet mode via Shift+H
@@ -240,16 +240,15 @@ fn test_alphabet_mode_persists_across_commit() {
     engine.process_key(&press_key(Keysym::RETURN));
     assert!(matches!(engine.state(), InputState::Empty));
 
-    // alphabet_mode should persist
-    assert!(engine.input_mode == InputMode::Alphabet);
+    assert!(engine.input_mode == InputMode::Hiragana);
 
-    // New input should still be in alphabet mode
     engine.process_key(&press('y'));
-    assert_eq!(engine.preedit().unwrap().text(), "y");
+    engine.process_key(&press('a'));
+    assert_eq!(engine.preedit().unwrap().text(), "や");
 }
 
 #[test]
-fn test_alphabet_mode_cancel_clears_flags() {
+fn test_alphabet_mode_resets_after_cancel() {
     let mut engine = InputMethodEngine::new();
 
     // Enter alphabet mode via Shift+A, type, cancel
@@ -258,8 +257,7 @@ fn test_alphabet_mode_cancel_clears_flags() {
 
     engine.process_key(&press_key(Keysym::ESCAPE));
     assert!(matches!(engine.state(), InputState::Empty));
-    // Mode persists even after cancel
-    assert!(engine.input_mode == InputMode::Alphabet);
+    assert!(engine.input_mode == InputMode::Hiragana);
 }
 
 #[test]
