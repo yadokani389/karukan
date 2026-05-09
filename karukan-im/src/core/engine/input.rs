@@ -12,6 +12,15 @@ fn ascii_symbol_to_fullwidth(c: char) -> Option<char> {
 }
 
 impl InputMethodEngine {
+    pub(super) fn contains_japanese_reading_text(text: &str) -> bool {
+        text.chars().any(|ch| {
+            matches!(
+                ch,
+                '\u{3040}'..='\u{309f}' | '\u{30a0}'..='\u{30ff}'
+            )
+        })
+    }
+
     fn normalize_input_symbol(&self, ch: char) -> char {
         if !ch.is_ascii() {
             return ch;
@@ -128,29 +137,26 @@ impl InputMethodEngine {
                 .with_action(EngineAction::UpdateAuxText(self.format_aux_composing()));
         }
 
-        // Alphabet mode with active live conversion: preserve the conversion display
-        if self.input_mode == InputMode::Alphabet && !self.live.text.is_empty() {
-            let preedit = self.set_composing_state();
-            return EngineResult::consumed().with_action(EngineAction::UpdatePreedit(preedit));
-        }
-
-        let suggestions =
-            if self.input_mode != InputMode::Alphabet && !self.input_buf.text.is_empty() {
-                let reading = self.input_buf.text.clone();
-                let live_text = self.build_live_conversion_text(&reading);
-                let has_non_fallback = self
-                    .build_exact_conversion_ranked_candidates(
-                        &reading,
-                        self.config
-                            .num_candidates
-                            .max(CandidateList::DEFAULT_PAGE_SIZE),
-                    )
-                    .iter()
-                    .any(|candidate| candidate.source() != CandidateSource::Fallback);
-                Some((live_text, has_non_fallback))
-            } else {
-                None
-            };
+        let suggestions = if self.input_mode != InputMode::Katakana
+            && !self.input_buf.text.is_empty()
+            && (self.input_mode != InputMode::Alphabet
+                || Self::contains_japanese_reading_text(&self.input_buf.text))
+        {
+            let reading = self.input_buf.text.clone();
+            let live_text = self.build_live_conversion_text(&reading);
+            let has_non_fallback = self
+                .build_exact_conversion_ranked_candidates(
+                    &reading,
+                    self.config
+                        .num_candidates
+                        .max(CandidateList::DEFAULT_PAGE_SIZE),
+                )
+                .iter()
+                .any(|candidate| candidate.source() != CandidateSource::Fallback);
+            Some((live_text, has_non_fallback))
+        } else {
+            None
+        };
 
         let Some((live_text, has_non_fallback)) = suggestions else {
             self.live.text.clear();

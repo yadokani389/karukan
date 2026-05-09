@@ -196,6 +196,18 @@ fn test_live_conversion_normalizes_symbol_width() {
 }
 
 #[test]
+fn test_live_conversion_allows_alphabet_mode_with_japanese_reading() {
+    assert!(InputMethodEngine::contains_japanese_reading_text(
+        "きょうもLinuxをつかう"
+    ));
+}
+
+#[test]
+fn test_live_conversion_skips_plain_alphabet_text() {
+    assert!(!InputMethodEngine::contains_japanese_reading_text("Linux"));
+}
+
+#[test]
 fn test_live_conversion_rewrites_segment_from_user_dictionary() {
     let mut engine = make_live_conversion_engine();
     engine.dicts.user = Some(make_test_dictionary(
