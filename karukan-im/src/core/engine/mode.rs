@@ -138,11 +138,20 @@ impl InputMethodEngine {
 
     pub(super) fn enter_hiragana_mode(&mut self) -> EngineResult {
         if self.input_mode == InputMode::Hiragana {
+            if !self.live.text.is_empty() {
+                self.live.text.clear();
+                let preedit = self.set_composing_state();
+                return EngineResult::consumed()
+                    .with_action(EngineAction::UpdatePreedit(preedit))
+                    .with_action(EngineAction::HideCandidates)
+                    .with_action(EngineAction::UpdateAuxText(self.format_aux_composing()));
+            }
             return EngineResult::not_consumed();
         }
 
         self.input_mode = InputMode::Hiragana;
         self.direct_mode = None;
+        self.live.text.clear();
         self.flush_romaji_to_composed();
 
         let aux = self.format_aux_composing();

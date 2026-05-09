@@ -68,6 +68,22 @@ fn test_ctrl_j_switches_katakana_to_hiragana() {
 }
 
 #[test]
+fn test_ctrl_j_clears_live_conversion_display() {
+    let mut engine = make_live_conversion_engine();
+
+    engine.process_key(&press('a'));
+    engine.process_key(&press('i'));
+    engine.live.text = "愛".to_string();
+    let preedit = engine.set_composing_state();
+    assert_eq!(preedit.text(), "愛");
+
+    let result = engine.process_key(&press_ctrl(Keysym::KEY_J));
+    assert!(result.consumed);
+    assert!(engine.live.text.is_empty());
+    assert_eq!(engine.preedit().unwrap().text(), "あい");
+}
+
+#[test]
 fn test_mode_toggle_key_during_alphabet_input() {
     let mut engine = InputMethodEngine::new();
 
