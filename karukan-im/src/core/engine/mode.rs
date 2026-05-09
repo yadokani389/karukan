@@ -138,6 +138,29 @@ impl InputMethodEngine {
             .with_action(EngineAction::UpdateAuxText(aux))
     }
 
+    pub(super) fn enter_hiragana_mode(&mut self) -> EngineResult {
+        if self.input_mode == InputMode::Hiragana {
+            return EngineResult::not_consumed();
+        }
+
+        if self.input_mode == InputMode::Katakana {
+            self.bake_katakana();
+        }
+        self.input_mode = InputMode::Hiragana;
+        self.direct_mode = None;
+        self.flush_romaji_to_composed();
+
+        let aux = self.format_aux_composing();
+        if matches!(self.state, InputState::Composing { .. }) {
+            let preedit = self.set_composing_state();
+            return EngineResult::consumed()
+                .with_action(EngineAction::UpdatePreedit(preedit))
+                .with_action(EngineAction::UpdateAuxText(aux));
+        }
+
+        EngineResult::consumed().with_action(EngineAction::UpdateAuxText(aux))
+    }
+
     /// Toggle live conversion mode via Ctrl+Shift+L
     pub(super) fn toggle_live_conversion(&mut self) -> EngineResult {
         self.direct_mode = None;

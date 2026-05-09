@@ -462,6 +462,15 @@ impl InputMethodEngine {
             return self.toggle_live_conversion();
         }
 
+        // Ctrl+J: explicit return to Hiragana from Alphabet/Katakana modes.
+        if key.modifiers.control_key
+            && !key.modifiers.alt_key
+            && !key.modifiers.shift_key
+            && (key.keysym == Keysym::KEY_J || key.keysym == Keysym::KEY_J_UPPER)
+        {
+            return self.enter_hiragana_mode();
+        }
+
         // Reset adaptive model flag when starting a new word (first key in Empty state)
         if matches!(self.state, InputState::Empty) {
             self.metrics.adaptive_use_light_model = false;

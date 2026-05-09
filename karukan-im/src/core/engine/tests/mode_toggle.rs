@@ -9,7 +9,6 @@ fn test_mode_toggle_key_switches_alphabet_to_hiragana() {
     // Enter alphabet mode via Shift+A
     engine.process_key(&press_shift('A'));
     assert!(engine.input_mode == InputMode::Alphabet);
-    engine.process_key(&press_key(Keysym::RETURN)); // commit to clear state
 
     // Alt_R press → switch to hiragana mode
     let result = engine.process_key(&press_key(Keysym::ALT_R));
@@ -18,7 +17,7 @@ fn test_mode_toggle_key_switches_alphabet_to_hiragana() {
 
     // Type 'a' → should be 'あ' (hiragana mode)
     engine.process_key(&press('a'));
-    assert_eq!(engine.preedit().unwrap().text(), "あ");
+    assert_eq!(engine.preedit().unwrap().text(), "Aあ");
 }
 
 #[test]
@@ -34,6 +33,38 @@ fn test_mode_toggle_key_noop_in_hiragana() {
     // Type 'a' → still hiragana
     engine.process_key(&press('a'));
     assert_eq!(engine.preedit().unwrap().text(), "あ");
+}
+
+#[test]
+fn test_ctrl_j_switches_alphabet_to_hiragana() {
+    let mut engine = InputMethodEngine::new();
+
+    engine.process_key(&press_shift('A'));
+    assert!(engine.input_mode == InputMode::Alphabet);
+
+    let result = engine.process_key(&press_ctrl(Keysym::KEY_J));
+    assert!(result.consumed);
+    assert!(engine.input_mode == InputMode::Hiragana);
+
+    engine.process_key(&press('k'));
+    engine.process_key(&press('a'));
+    assert_eq!(engine.preedit().unwrap().text(), "Aか");
+}
+
+#[test]
+fn test_ctrl_j_switches_katakana_to_hiragana() {
+    let mut engine = InputMethodEngine::new();
+
+    engine.process_key(&press('a'));
+    engine.process_key(&press_ctrl(Keysym::KEY_K));
+    assert!(engine.input_mode == InputMode::Katakana);
+
+    let result = engine.process_key(&press_ctrl(Keysym::KEY_J));
+    assert!(result.consumed);
+    assert!(engine.input_mode == InputMode::Hiragana);
+
+    engine.process_key(&press('i'));
+    assert_eq!(engine.preedit().unwrap().text(), "アい");
 }
 
 #[test]
