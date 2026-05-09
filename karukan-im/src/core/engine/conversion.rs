@@ -829,7 +829,7 @@ impl InputMethodEngine {
                         CandidateCommitKind::Whole,
                     )
                 });
-            entry.best_model_rank = Some(entry.best_model_rank.map_or(0, |best| best.min(0)));
+            entry.best_model_rank = Some(0);
         }
 
         let mut ranked: Vec<_> = candidate_map.into_values().collect();
