@@ -72,6 +72,59 @@ impl InputMethodEngine {
         Some(self.activate_direct_mode(mode))
     }
 
+    fn enter_alphabet_mode(&mut self, clear_live: bool) -> EngineResult {
+        if self.input_mode == InputMode::Alphabet {
+            return EngineResult::not_consumed();
+        }
+
+        if self.input_mode == InputMode::Katakana {
+            self.bake_katakana();
+        }
+        self.input_mode = InputMode::Alphabet;
+        self.direct_mode = None;
+        self.flush_romaji_to_composed();
+        if clear_live {
+            self.live.text.clear();
+        }
+
+        let aux = self.format_aux_composing();
+        if matches!(self.state, InputState::Composing { .. }) {
+            let preedit = self.set_composing_state();
+            return EngineResult::consumed()
+                .with_action(EngineAction::UpdatePreedit(preedit))
+                .with_action(EngineAction::HideCandidates)
+                .with_action(EngineAction::UpdateAuxText(aux));
+        }
+
+        EngineResult::consumed().with_action(EngineAction::UpdateAuxText(aux))
+    }
+
+    pub(super) fn handle_shift_tap_key(&mut self, key: &KeyEvent) -> Option<EngineResult> {
+        if key.keysym.is_shift() {
+            if key.is_press {
+                self.shift_tap_pending = true;
+                return Some(EngineResult::not_consumed());
+            }
+
+            if self.shift_tap_pending {
+                self.shift_tap_pending = false;
+                return Some(if self.input_mode == InputMode::Alphabet {
+                    self.enter_hiragana_mode_with_live_clear(false)
+                } else {
+                    self.enter_alphabet_mode(false)
+                });
+            }
+
+            return Some(EngineResult::not_consumed());
+        }
+
+        if key.is_press {
+            self.shift_tap_pending = false;
+        }
+
+        None
+    }
+
     pub(super) fn commit_direct_mode(&mut self) -> EngineResult {
         let Some(text) = self.direct_commit_text() else {
             return EngineResult::not_consumed();
@@ -137,8 +190,12 @@ impl InputMethodEngine {
     }
 
     pub(super) fn enter_hiragana_mode(&mut self) -> EngineResult {
+        self.enter_hiragana_mode_with_live_clear(true)
+    }
+
+    fn enter_hiragana_mode_with_live_clear(&mut self, clear_live: bool) -> EngineResult {
         if self.input_mode == InputMode::Hiragana {
-            if !self.live.text.is_empty() {
+            if clear_live && !self.live.text.is_empty() {
                 self.live.text.clear();
                 let preedit = self.set_composing_state();
                 return EngineResult::consumed()
@@ -151,7 +208,9 @@ impl InputMethodEngine {
 
         self.input_mode = InputMode::Hiragana;
         self.direct_mode = None;
-        self.live.text.clear();
+        if clear_live {
+            self.live.text.clear();
+        }
         self.flush_romaji_to_composed();
 
         let aux = self.format_aux_composing();

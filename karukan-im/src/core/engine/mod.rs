@@ -102,6 +102,8 @@ pub struct InputMethodEngine {
     metrics: ConversionMetrics,
     /// Current input mode (Hiragana, Katakana, or Alphabet)
     input_mode: InputMode,
+    /// Whether the current Shift press can still be treated as a mode toggle.
+    shift_tap_pending: bool,
     /// Temporary direct conversion mode triggered by F6-F10.
     direct_mode: Option<DirectConversionMode>,
     /// Composed input buffer (hiragana text, cursor position)
@@ -136,6 +138,7 @@ impl InputMethodEngine {
             config,
             metrics: ConversionMetrics::default(),
             input_mode: InputMode::Hiragana,
+            shift_tap_pending: false,
             direct_mode: None,
             input_buf: InputBuffer::new(),
             raw_units: Vec::new(),
@@ -205,6 +208,7 @@ impl InputMethodEngine {
         self.state = InputState::Empty;
         self.converters.romaji.reset();
         self.input_mode = InputMode::Hiragana;
+        self.shift_tap_pending = false;
         self.direct_mode = None;
         self.input_buf.clear();
         self.raw_units.clear();
@@ -433,6 +437,10 @@ impl InputMethodEngine {
                 "modifier key: keysym=0x{:04x} press={} modifiers={:?}",
                 key.keysym.0, key.is_press, key.modifiers
             );
+        }
+
+        if let Some(result) = self.handle_shift_tap_key(key) {
+            return result;
         }
 
         // Right Alt/Super/Meta/Hyper: one-way non-Hiragana → Hiragana switch

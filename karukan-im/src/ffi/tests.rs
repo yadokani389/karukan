@@ -475,21 +475,21 @@ fn test_ffi_uppercase_keysym_without_shift_flag() {
 }
 
 #[test]
-fn test_ffi_standalone_shift_does_not_toggle_mode() {
+fn test_ffi_standalone_shift_toggles_alphabet_mode() {
     let e = TestEngine::new();
 
     // Shift_L press
     e.press(XKB_KEY_SHIFT_L);
 
-    // Shift_L release → standalone Shift should NOT toggle mode
+    // Shift_L release → standalone Shift toggles alphabet mode
     e.release(XKB_KEY_SHIFT_L);
 
-    // Now type 'a' without shift → should be 'あ' (still in hiragana mode)
+    // Now type 'a' without shift → should be direct alphabet input
     e.press(XKB_KEY_A);
     assert_eq!(
         e.preedit(),
-        "あ",
-        "After standalone Shift, 'a' should still produce hiragana"
+        "a",
+        "After standalone Shift, 'a' should produce alphabet input"
     );
 }
 

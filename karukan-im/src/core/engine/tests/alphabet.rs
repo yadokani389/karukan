@@ -7,15 +7,29 @@ fn test_shift_alone_does_not_toggle_mode() {
     let mut engine = InputMethodEngine::new();
     assert!(engine.input_mode != InputMode::Alphabet);
 
-    // Shift press alone should NOT toggle mode
+    // Shift press alone waits for release before toggling.
     let result = engine.process_key(&press_key(Keysym::SHIFT_L));
     assert!(!result.consumed);
     assert!(engine.input_mode != InputMode::Alphabet);
 
-    // Shift release is a no-op
+    // Shift release toggles alphabet mode.
     let result = engine.process_key(&release_key(Keysym::SHIFT_L));
-    assert!(!result.consumed);
-    assert!(engine.input_mode != InputMode::Alphabet);
+    assert!(result.consumed);
+    assert!(engine.input_mode == InputMode::Alphabet);
+}
+
+#[test]
+fn test_shift_tap_toggles_alphabet_to_hiragana() {
+    let mut engine = InputMethodEngine::new();
+
+    engine.process_key(&press_key(Keysym::SHIFT_L));
+    engine.process_key(&release_key(Keysym::SHIFT_L));
+    assert!(engine.input_mode == InputMode::Alphabet);
+
+    engine.process_key(&press_key(Keysym::SHIFT_L));
+    let result = engine.process_key(&release_key(Keysym::SHIFT_L));
+    assert!(result.consumed);
+    assert!(engine.input_mode == InputMode::Hiragana);
 }
 
 #[test]
@@ -283,9 +297,71 @@ fn test_shift_right_alone_does_not_toggle() {
     let mut engine = InputMethodEngine::new();
     assert!(engine.input_mode != InputMode::Alphabet);
 
-    // Right Shift alone should NOT toggle alphabet mode
+    // Right Shift press alone waits for release before toggling.
     engine.process_key(&press_key(Keysym::SHIFT_R));
     assert!(engine.input_mode != InputMode::Alphabet);
+    engine.process_key(&release_key(Keysym::SHIFT_R));
+    assert!(engine.input_mode == InputMode::Alphabet);
+}
+
+#[test]
+fn test_shift_modified_letter_does_not_toggle_on_release() {
+    let mut engine = InputMethodEngine::new();
+
+    engine.process_key(&press_key(Keysym::SHIFT_L));
+    engine.process_key(&press_shift('A'));
+    engine.process_key(&release_key(Keysym::SHIFT_L));
+    assert!(engine.input_mode == InputMode::Alphabet);
+    assert_eq!(engine.preedit().unwrap().text(), "A");
+}
+
+#[test]
+fn test_shift_tap_switches_katakana_to_alphabet() {
+    let mut engine = InputMethodEngine::new();
+
+    engine.process_key(&press('a'));
+    engine.process_key(&press_ctrl(Keysym::KEY_K));
+    assert!(engine.input_mode == InputMode::Katakana);
+
+    engine.process_key(&press_key(Keysym::SHIFT_L));
+    engine.process_key(&release_key(Keysym::SHIFT_L));
+    assert!(engine.input_mode == InputMode::Alphabet);
+    assert_eq!(engine.preedit().unwrap().text(), "ア");
+}
+
+#[test]
+fn test_shift_tap_to_alphabet_preserves_live_conversion() {
+    let mut engine = make_live_conversion_engine();
+
+    engine.process_key(&press('a'));
+    engine.live.text = "亜".to_string();
+
+    engine.process_key(&press_key(Keysym::SHIFT_L));
+    let result = engine.process_key(&release_key(Keysym::SHIFT_L));
+
+    assert!(result.consumed);
+    assert!(engine.input_mode == InputMode::Alphabet);
+    assert_eq!(engine.live.text, "亜");
+    assert_eq!(engine.preedit().unwrap().text(), "亜");
+}
+
+#[test]
+fn test_shift_tap_to_hiragana_preserves_live_conversion() {
+    let mut engine = make_live_conversion_engine();
+
+    engine.process_key(&press('a'));
+    engine.process_key(&press_key(Keysym::SHIFT_L));
+    engine.process_key(&release_key(Keysym::SHIFT_L));
+    assert!(engine.input_mode == InputMode::Alphabet);
+
+    engine.live.text = "亜".to_string();
+    engine.process_key(&press_key(Keysym::SHIFT_L));
+    let result = engine.process_key(&release_key(Keysym::SHIFT_L));
+
+    assert!(result.consumed);
+    assert!(engine.input_mode == InputMode::Hiragana);
+    assert_eq!(engine.live.text, "亜");
+    assert_eq!(engine.preedit().unwrap().text(), "亜");
 }
 
 #[test]
