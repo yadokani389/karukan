@@ -224,15 +224,31 @@ fn test_ctrl_k_toggles_katakana_mode() {
     // Ctrl+K again → return to hiragana mode
     engine.process_key(&ctrl_k);
     assert!(engine.input_mode == InputMode::Hiragana);
-    assert_eq!(engine.preedit().unwrap().text(), "アイ");
+    assert_eq!(engine.input_buf.text, "あい");
+    assert_eq!(engine.preedit().unwrap().text(), "あい");
 
-    // Right Super → return to hiragana mode, katakana is baked in
+    // Right Super in hiragana mode is a no-op.
     engine.process_key(&press_key(Keysym::SUPER_R));
     assert!(engine.input_mode == InputMode::Hiragana);
-    assert_eq!(engine.input_buf.text, "アイ");
-    assert_eq!(engine.preedit().unwrap().text(), "アイ");
+    assert_eq!(engine.input_buf.text, "あい");
+    assert_eq!(engine.preedit().unwrap().text(), "あい");
 
     // New input in hiragana mode
     engine.process_key(&press('u'));
-    assert_eq!(engine.preedit().unwrap().text(), "アイう");
+    assert_eq!(engine.preedit().unwrap().text(), "あいう");
+}
+
+#[test]
+fn test_mode_toggle_returns_katakana_display_to_hiragana_without_baking() {
+    let mut engine = InputMethodEngine::new();
+
+    engine.process_key(&press('a'));
+    engine.process_key(&press('i'));
+    engine.process_key(&press_ctrl(Keysym::KEY_K));
+    assert_eq!(engine.preedit().unwrap().text(), "アイ");
+
+    engine.process_key(&press_key(Keysym::SUPER_R));
+    assert!(engine.input_mode == InputMode::Hiragana);
+    assert_eq!(engine.input_buf.text, "あい");
+    assert_eq!(engine.preedit().unwrap().text(), "あい");
 }

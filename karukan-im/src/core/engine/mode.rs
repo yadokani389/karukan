@@ -141,9 +141,6 @@ impl InputMethodEngine {
             return EngineResult::not_consumed();
         }
 
-        if self.input_mode == InputMode::Katakana {
-            self.bake_katakana();
-        }
         self.input_mode = InputMode::Hiragana;
         self.direct_mode = None;
         self.flush_romaji_to_composed();

@@ -64,7 +64,7 @@ fn test_ctrl_j_switches_katakana_to_hiragana() {
     assert!(engine.input_mode == InputMode::Hiragana);
 
     engine.process_key(&press('i'));
-    assert_eq!(engine.preedit().unwrap().text(), "アい");
+    assert_eq!(engine.preedit().unwrap().text(), "あい");
 }
 
 #[test]

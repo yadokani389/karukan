@@ -408,10 +408,6 @@ impl InputMethodEngine {
         // Only consume the key when actually switching; otherwise pass through
         // so the system can properly track modifier state.
         if key.is_press && self.input_mode != InputMode::Hiragana {
-            // Bake katakana before switching so preedit doesn't revert
-            if self.input_mode == InputMode::Katakana {
-                self.bake_katakana();
-            }
             self.input_mode = InputMode::Hiragana;
             self.direct_mode = None;
             self.flush_romaji_to_composed();
