@@ -199,7 +199,7 @@ fn test_katakana_baked_on_switch_to_alphabet() {
 }
 
 #[test]
-fn test_ctrl_k_is_one_way_to_katakana() {
+fn test_ctrl_k_toggles_katakana_mode() {
     let mut engine = InputMethodEngine::new();
 
     // Type "ai" → "あい"
@@ -221,9 +221,9 @@ fn test_ctrl_k_is_one_way_to_katakana() {
     assert!(engine.input_mode == InputMode::Katakana);
     assert_eq!(engine.preedit().unwrap().text(), "アイ");
 
-    // Ctrl+K again → still katakana mode (not a toggle)
+    // Ctrl+K again → return to hiragana mode
     engine.process_key(&ctrl_k);
-    assert!(engine.input_mode == InputMode::Katakana);
+    assert!(engine.input_mode == InputMode::Hiragana);
     assert_eq!(engine.preedit().unwrap().text(), "アイ");
 
     // Right Super → return to hiragana mode, katakana is baked in

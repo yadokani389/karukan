@@ -109,12 +109,10 @@ impl InputMethodEngine {
         result
     }
 
-    /// Enter katakana mode (Ctrl+k)
-    /// One-way switch to Katakana; use Right Super to return to Hiragana.
+    /// Toggle katakana mode (Ctrl+k).
     pub(super) fn enter_katakana_mode(&mut self) -> EngineResult {
-        // Already in katakana mode: nothing to do
         if self.input_mode == InputMode::Katakana {
-            return EngineResult::consumed();
+            return self.enter_hiragana_mode();
         }
 
         self.input_mode = InputMode::Katakana;
