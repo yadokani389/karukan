@@ -346,16 +346,20 @@ impl InputMethodEngine {
             for prefix_candidate in
                 self.build_exact_conversion_candidates(&first_reading, num_candidates)
             {
-                if !seen.insert(prefix_candidate.text.clone()) {
+                let remaining_reading =
+                    Self::slice_chars(reading, committed_reading_len, reading.chars().count());
+                let display_text = format!("{}{}", prefix_candidate.text, remaining_reading);
+                if !seen.insert(display_text.clone()) {
                     continue;
                 }
 
                 prefix_candidates.push(AnnotatedCandidate {
-                    text: prefix_candidate.text,
+                    text: display_text,
                     source: prefix_candidate.source,
-                    reading: Some(first_reading.clone()),
+                    reading: Some(reading.to_string()),
                     commit_kind: CandidateCommitKind::Prefix {
                         committed_reading_len,
+                        committed_text: prefix_candidate.text,
                     },
                 });
             }
@@ -492,13 +496,8 @@ impl InputMethodEngine {
             .iter()
             .enumerate()
             .flat_map(|(index, segment)| {
-                let segment_reading =
-                    Self::slice_chars(&session.reading, segment.reading_start, segment.reading_end);
-                let preedit_segments = Self::build_segment_preedit_segments(
-                    segment,
-                    &segment_reading,
-                    index == session.active_segment,
-                );
+                let preedit_segments =
+                    Self::build_segment_preedit_segments(segment, index == session.active_segment);
                 let text_len: usize = preedit_segments
                     .iter()
                     .map(|seg| seg.text.chars().count())
@@ -514,7 +513,6 @@ impl InputMethodEngine {
 
     fn build_segment_preedit_segments(
         segment: &ConversionSegment,
-        segment_reading: &str,
         is_active: bool,
     ) -> Vec<PreeditSegment> {
         let attr = if is_active {
@@ -529,15 +527,19 @@ impl InputMethodEngine {
         match candidate.commit_kind {
             CandidateCommitKind::Whole => vec![PreeditSegment::new(candidate.text.clone(), attr)],
             CandidateCommitKind::Prefix {
-                committed_reading_len,
+                committed_reading_len: _,
+                ref committed_text,
             } => {
-                let committed_len = committed_reading_len.min(segment_reading.chars().count());
+                let committed_len = committed_text.chars().count();
+                let mut segments = vec![PreeditSegment::new(
+                    Self::slice_chars(&candidate.text, 0, committed_len),
+                    attr,
+                )];
                 let remaining = Self::slice_chars(
-                    segment_reading,
+                    &candidate.text,
                     committed_len,
-                    segment_reading.chars().count(),
+                    candidate.text.chars().count(),
                 );
-                let mut segments = vec![PreeditSegment::new(candidate.text.clone(), attr)];
                 if !remaining.is_empty() {
                     segments.push(PreeditSegment::new(remaining, AttributeType::Underline));
                 }
@@ -1167,7 +1169,11 @@ impl InputMethodEngine {
             .map(|candidate| candidate.commit_kind.clone())
     }
 
-    fn commit_prefix_candidate(&mut self, committed_reading_len: usize) -> EngineResult {
+    fn commit_prefix_candidate(
+        &mut self,
+        committed_reading_len: usize,
+        committed_text: String,
+    ) -> EngineResult {
         let Some(session) = self.state.conversion_session().cloned() else {
             return EngineResult::not_consumed();
         };
@@ -1178,22 +1184,22 @@ impl InputMethodEngine {
             return self.finish_full_conversion(text);
         }
 
-        let Some(candidate) = session
+        if session
             .segments
             .first()
             .and_then(|segment| segment.candidates.selected())
-        else {
+            .is_none()
+        {
             return EngineResult::not_consumed();
-        };
+        }
 
         let reading_len = session.reading.chars().count();
         let committed_len = committed_reading_len.min(reading_len);
         let remaining_reading = Self::slice_chars(&session.reading, committed_len, reading_len);
         if remaining_reading.is_empty() {
-            return self.finish_full_conversion(candidate.text.clone());
+            return self.finish_full_conversion(committed_text);
         }
 
-        let committed_text = candidate.text.clone();
         let committed_reading = Self::slice_chars(&session.reading, 0, committed_len);
         let explicit = session
             .segments
@@ -1341,9 +1347,10 @@ impl InputMethodEngine {
     fn commit_conversion(&mut self) -> EngineResult {
         if let Some(CandidateCommitKind::Prefix {
             committed_reading_len,
+            committed_text,
         }) = self.selected_commit_kind()
         {
-            return self.commit_prefix_candidate(committed_reading_len);
+            return self.commit_prefix_candidate(committed_reading_len, committed_text);
         }
 
         let Some((text, _reading)) = self.selected_conversion_info() else {

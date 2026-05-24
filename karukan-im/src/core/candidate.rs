@@ -11,6 +11,8 @@ pub enum CandidateCommitKind {
     Prefix {
         /// Number of reading characters consumed by the committed prefix.
         committed_reading_len: usize,
+        /// Surface text committed before continuing conversion for the remaining reading.
+        committed_text: String,
     },
 }
 
@@ -50,9 +52,14 @@ impl Candidate {
         }
     }
 
-    pub fn with_prefix_commit(mut self, committed_reading_len: usize) -> Self {
+    pub fn with_prefix_commit(
+        mut self,
+        committed_reading_len: usize,
+        committed_text: impl Into<String>,
+    ) -> Self {
         self.commit_kind = CandidateCommitKind::Prefix {
             committed_reading_len,
+            committed_text: committed_text.into(),
         };
         self
     }

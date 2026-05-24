@@ -450,9 +450,16 @@ fn test_prefix_commit_candidate_keeps_remaining_reading_in_preedit() {
         "きょうはいいてんきですね",
         vec![
             Candidate::with_reading("今日はいい天気ですね", "きょうはいいてんきですね"),
-            Candidate::with_reading("今日は", "きょうは")
-                .with_prefix_commit("きょうは".chars().count())
-                .with_index(1),
+            Candidate {
+                text: "今日はいいてんきですね".to_string(),
+                reading: Some("きょうはいいてんきですね".to_string()),
+                annotation: None,
+                index: 1,
+                commit_kind: CandidateCommitKind::Prefix {
+                    committed_reading_len: "きょうは".chars().count(),
+                    committed_text: "今日は".to_string(),
+                },
+            },
         ],
     );
 
@@ -467,9 +474,16 @@ fn test_enter_on_prefix_commit_candidate_commits_prefix_and_continues_conversion
         "きょうはいいてんきですね",
         vec![
             Candidate::with_reading("今日はいい天気ですね", "きょうはいいてんきですね"),
-            Candidate::with_reading("今日は", "きょうは")
-                .with_prefix_commit("きょうは".chars().count())
-                .with_index(1),
+            Candidate {
+                text: "今日はいいてんきですね".to_string(),
+                reading: Some("きょうはいいてんきですね".to_string()),
+                annotation: None,
+                index: 1,
+                commit_kind: CandidateCommitKind::Prefix {
+                    committed_reading_len: "きょうは".chars().count(),
+                    committed_text: "今日は".to_string(),
+                },
+            },
         ],
     );
 
@@ -512,8 +526,8 @@ fn test_prefix_commit_candidates_reconvert_first_reading() {
         .map(|candidate| candidate.text.clone())
         .collect();
 
-    assert!(texts.iter().any(|text| text == "今日は"));
-    assert!(texts.iter().any(|text| text == "教派"));
+    assert!(texts.iter().any(|text| text == "今日はいいてんきですね"));
+    assert!(texts.iter().any(|text| text == "教派いいてんきですね"));
 }
 
 #[test]
