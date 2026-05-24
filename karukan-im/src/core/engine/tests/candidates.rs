@@ -21,6 +21,8 @@ fn test_live_text_preserved_in_conversion_via_down() {
 
     // The candidate list should contain "愛"
     let candidates = engine.state().candidates().unwrap();
+    assert_eq!(candidates.selected_text(), Some("愛"));
+    assert_eq!(engine.preedit().unwrap().text(), "愛");
     assert!(
         candidates.candidates().iter().any(|c| c.text == "愛"),
         "AI inference result '愛' should be in the candidate list"
@@ -70,6 +72,8 @@ fn test_suggest_result_preserved_in_start_conversion() {
 
     // "愛" should be preserved in the candidate list
     let candidates = engine.state().candidates().unwrap();
+    assert_eq!(candidates.selected_text(), Some("愛"));
+    assert_eq!(engine.preedit().unwrap().text(), "愛");
     assert!(
         candidates.candidates().iter().any(|c| c.text == "愛"),
         "Previous suggest result '愛' should be preserved in candidates"

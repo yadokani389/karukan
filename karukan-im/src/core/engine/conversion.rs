@@ -371,14 +371,21 @@ impl InputMethodEngine {
         preserved_text: Option<String>,
         allow_prefix_commit: bool,
     ) -> CandidateList {
+        let preserved_text = preserved_text.filter(|text| !text.is_empty() && text != reading);
         let ranked_candidates = self.ranked_candidates_with_preserved(
             reading,
             num_candidates,
-            preserved_text
-                .as_deref()
-                .filter(|text| !text.is_empty() && *text != reading),
+            preserved_text.as_deref(),
         );
         let mut candidates = self.annotate_candidates(ranked_candidates);
+        if let Some(preserved_text) = &preserved_text
+            && let Some(index) = candidates
+                .iter()
+                .position(|candidate| candidate.text == *preserved_text)
+        {
+            let preserved = candidates.remove(index);
+            candidates.insert(0, preserved);
+        }
         if let Some(base_surface) = candidates.first().map(|candidate| candidate.text.clone()) {
             self.append_sentence_alternatives(reading, &base_surface, &mut candidates);
         }
