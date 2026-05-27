@@ -346,9 +346,7 @@ impl InputMethodEngine {
             for prefix_candidate in
                 self.build_exact_conversion_candidates(&first_reading, num_candidates)
             {
-                let remaining_reading =
-                    Self::slice_chars(reading, committed_reading_len, reading.chars().count());
-                let display_text = format!("{}{}", prefix_candidate.text, remaining_reading);
+                let display_text = prefix_candidate.text.clone();
                 if !seen.insert(display_text.clone()) {
                     continue;
                 }

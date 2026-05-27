@@ -445,13 +445,13 @@ fn test_custom_segment_resize_key_binding() {
 }
 
 #[test]
-fn test_prefix_commit_candidate_keeps_remaining_reading_in_preedit() {
+fn test_prefix_commit_candidate_shows_committed_prefix_only() {
     let mut engine = make_single_segment_conversion_with_candidates(
         "きょうはいいてんきですね",
         vec![
             Candidate::with_reading("今日はいい天気ですね", "きょうはいいてんきですね"),
             Candidate {
-                text: "今日はいいてんきですね".to_string(),
+                text: "今日は".to_string(),
                 reading: Some("きょうはいいてんきですね".to_string()),
                 annotation: None,
                 index: 1,
@@ -465,7 +465,7 @@ fn test_prefix_commit_candidate_keeps_remaining_reading_in_preedit() {
 
     let result = engine.process_key(&press_key(Keysym::DOWN));
     assert!(result.consumed);
-    assert_eq!(engine.preedit().unwrap().text(), "今日はいいてんきですね");
+    assert_eq!(engine.preedit().unwrap().text(), "今日は");
 }
 
 #[test]
@@ -475,7 +475,7 @@ fn test_enter_on_prefix_commit_candidate_commits_prefix_and_continues_conversion
         vec![
             Candidate::with_reading("今日はいい天気ですね", "きょうはいいてんきですね"),
             Candidate {
-                text: "今日はいいてんきですね".to_string(),
+                text: "今日は".to_string(),
                 reading: Some("きょうはいいてんきですね".to_string()),
                 annotation: None,
                 index: 1,
@@ -526,8 +526,8 @@ fn test_prefix_commit_candidates_reconvert_first_reading() {
         .map(|candidate| candidate.text.clone())
         .collect();
 
-    assert!(texts.iter().any(|text| text == "今日はいいてんきですね"));
-    assert!(texts.iter().any(|text| text == "教派いいてんきですね"));
+    assert!(texts.iter().any(|text| text == "今日は"));
+    assert!(texts.iter().any(|text| text == "教派"));
 }
 
 #[test]
