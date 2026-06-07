@@ -300,17 +300,16 @@ fn test_enter_moves_to_next_segment() {
 }
 
 #[test]
-fn test_enter_triggers_delayed_segmentation() {
+fn test_enter_commits_single_segment_without_delayed_segmentation() {
     let mut engine =
         make_single_segment_conversion("きょうはいいてんきですね", "今日はいい天気ですね");
 
     let result = engine.process_key(&press_key(Keysym::RETURN));
     assert!(result.consumed);
-
-    let session = engine.state().conversion_session().unwrap();
-    assert_eq!(session.segments.len(), 3);
-    assert!(session.segmentation_applied);
-    assert_eq!(session.active_segment, 1);
+    assert!(matches!(engine.state(), InputState::Empty));
+    assert!(result.actions.iter().any(
+        |action| matches!(action, EngineAction::Commit(text) if text == "今日はいい天気ですね")
+    ));
 }
 
 #[test]

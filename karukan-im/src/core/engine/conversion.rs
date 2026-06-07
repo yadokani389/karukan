@@ -1363,27 +1363,7 @@ impl InputMethodEngine {
         };
 
         if !session.segmentation_applied && session.segments.len() == 1 {
-            if !session.enter_segments {
-                return self.commit_conversion();
-            }
-
-            let surface = session
-                .segments
-                .first()
-                .map(ConversionSegment::selected_text)
-                .unwrap_or("")
-                .to_string();
-
-            let can_segment = self
-                .segment_surface_to_ranges(&surface, &session.reading)
-                .map(|ranges| ranges.len() > 1)
-                .unwrap_or(false);
-
-            return if can_segment {
-                self.auto_segment_for_navigation(true)
-            } else {
-                self.commit_conversion()
-            };
+            return self.commit_conversion();
         }
 
         if session.active_segment + 1 < session.segments.len() {
